@@ -1,0 +1,22 @@
+# 数据文件
+data/raw/
+data/processed/*.npy
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# 虚拟环境
+venv/
+.env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
