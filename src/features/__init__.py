@@ -1,2 +1,5 @@
-# 特征工程模块 - 待特征工程专家编写
-# 可实现: HOG, LBP, 小波描述符, PCA降维等
+"""Feature engineering utilities."""
+
+from .extractor import FeatureExtractor, load_features, save_features
+
+__all__ = ["FeatureExtractor", "save_features", "load_features"]

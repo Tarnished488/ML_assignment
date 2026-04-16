@@ -4,8 +4,12 @@
 """
 
 import numpy as np
-import cv2
 from typing import Optional, Tuple
+
+try:
+    import cv2
+except ModuleNotFoundError:
+    cv2 = None
 
 
 class Preprocessor:
@@ -44,15 +48,36 @@ class Preprocessor:
 
         if method == 'median':
             # 中值滤波降噪
-            denoised = np.array([cv2.medianBlur(img, kernel_size) for img in X_uint8])
+            if cv2 is not None:
+                denoised = np.array([cv2.medianBlur(img, kernel_size) for img in X_uint8])
+            else:
+                denoised = self._median_filter(X_uint8, kernel_size)
         elif method == 'morphological':
             # 形态学操作去噪
+            if cv2 is None:
+                raise ImportError("OpenCV is required for morphological denoising.")
             kernel = np.ones((kernel_size, kernel_size), np.uint8)
             denoised = np.array([cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in X_uint8])
         else:
             raise ValueError(f"未知的降噪方法: {method}")
 
         return denoised.astype(np.float32) / 255.0
+
+    def _median_filter(self, X_uint8: np.ndarray, kernel_size: int = 3) -> np.ndarray:
+        """Pure NumPy fallback for median denoising when OpenCV is unavailable."""
+        if kernel_size % 2 == 0 or kernel_size < 1:
+            raise ValueError("kernel_size must be a positive odd integer")
+
+        pad = kernel_size // 2
+        padded = np.pad(X_uint8, ((0, 0), (pad, pad), (pad, pad)), mode='edge')
+        denoised = np.empty_like(X_uint8)
+
+        for y in range(X_uint8.shape[1]):
+            for x in range(X_uint8.shape[2]):
+                window = padded[:, y:y + kernel_size, x:x + kernel_size]
+                denoised[:, y, x] = np.median(window, axis=(1, 2))
+
+        return denoised
 
     def center_image(self, img: np.ndarray) -> np.ndarray:
         """
@@ -131,6 +156,8 @@ class Preprocessor:
         new_h, new_w = int(h * scale), int(w * scale)
 
         # 缩放
+        if cv2 is None:
+            raise ImportError("OpenCV is required for resize_to_center.")
         digit_resized = cv2.resize(digit.astype(np.float32), (new_w, new_h),
                                    interpolation=cv2.INTER_AREA)
 
