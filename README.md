@@ -108,15 +108,24 @@ X_train, y_train, X_test, y_test = load_processed_data()
 ### CNN（主模型）
 
 ```
-输入 (1, 28, 28)
-→ Conv(1→32) → BatchNorm → ReLU → MaxPool     → (32, 14, 14)
-→ Conv(32→64) → BatchNorm → ReLU → MaxPool     → (64, 7, 7)
-→ Flatten → FC(3136→128) → ReLU → Dropout(0.5) → FC(128→10)
+输入层: 1 x 28 x 28 (灰度图像)
+    ↓
+卷积层1: Conv2d(1→32) + BatchNorm + ReLU + MaxPool
+    ↓
+卷积层2: Conv2d(32→64) + BatchNorm + ReLU + MaxPool
+    ↓
+Dropout: 0.25
+    ↓
+全连接层1: Linear(3136→128) + ReLU + Dropout
+    ↓
+全连接层2: Linear(128→10)
+    ↓
+输出层: 10类概率分布
 ```
 
 - 优化器：Adam (lr=0.001, weight_decay=1e-4)
 - 损失函数：Focal Loss + Label Smoothing (关注难分样本，防止过度自信)
-- 正则化：BatchNorm + Dropout(0.5) + 数据增强 + 早停
+- 正则化：Kaiming 初始化 + BatchNorm + Dropout(0.25+0.5) + 数据增强 + 早停
 
 ### 基线模型（用于对比）
 

@@ -174,6 +174,8 @@ class MNISTCNN(nn.Module):
     │   MaxPool2d(2×2)     — 尺寸再减半                                  │
     │   输出: (batch, 64, 7, 7)                                         │
     ├──────────────────────────────────────────────────────────────────┤
+    │ Dropout(0.25): 卷积层和全连接层之间的正则化                         │
+    ├──────────────────────────────────────────────────────────────────┤
     │ 分类器 (全连接层):                                                 │
     │   Flatten            — 展平成一维向量: 64×7×7 = 3136               │
     │   Linear(3136→128)   — 全连接, 整合所有特征                        │
@@ -186,8 +188,10 @@ class MNISTCNN(nn.Module):
     总参数量: 421,834
 
     改进点:
+        - Kaiming 初始化: 专为 ReLU 设计的权重初始化, 稳定训练初期的梯度传播
         - BatchNorm: 每层卷积后归一化, 加速收敛 + 提升准确率
-        - Dropout: 全连接层随机丢弃 50% 神经元, 防止过拟合
+        - Dropout(0.25): 卷积→全连接之间额外正则化, 减少共适应
+        - Dropout(0.5): 全连接层随机丢弃 50% 神经元, 防止过拟合
         - 配合 train.py 中的在线数据增强, 进一步提升泛化能力
 
     注意: 最后一层输出的是 raw logits (没过 Softmax),
@@ -237,6 +241,13 @@ class MNISTCNN(nn.Module):
         )
         # 经过两层卷积后: (batch, 64, 7, 7) = 每张图变成 64 个 7×7 的特征图
 
+        # ---- 卷积层和全连接层之间的 Dropout ----
+        # 参考改进: 在卷积层输出展平后、进入全连接层之前加 Dropout(0.25)
+        # 作用: 减少卷积特征到全连接层的共适应, 进一步防止过拟合
+        # 为什么用 0.25 (比全连接层的 0.5 小): 卷积层特征已经经过池化降维,
+        # 信息密度较高, 丢弃太多会损失有用特征
+        self.dropout_conv = nn.Dropout(0.25)
+
         # ---- 分类器部分 (全连接层) ----
         # 这部分负责把提取到的特征映射到 10 个类别
         self.classifier = nn.Sequential(
@@ -258,6 +269,10 @@ class MNISTCNN(nn.Module):
             nn.Linear(128, num_classes),
         )
 
+        # ---- Kaiming 权重初始化 ----
+        # 好的初始化让训练从第一轮就稳定, 避免梯度消失/爆炸
+        self._initialize_weights()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         前向传播: 从输入图像 → 输出 10 个类别的得分
@@ -278,9 +293,77 @@ class MNISTCNN(nn.Module):
         """
         # 先过卷积层提取特征
         x = self.features(x)
+        # 卷积层和全连接层之间的 Dropout(0.25), 防止过拟合
+        x = self.dropout_conv(x)
         # 再过全连接层做分类
         x = self.classifier(x)
         return x
+
+
+    def _initialize_weights(self):
+        """
+        Kaiming 权重初始化 (He 初始化)
+
+        为什么需要初始化:
+            如果权重全为 0 或随机得很小/很大, 训练初期梯度会消失或爆炸,
+            导致模型根本学不到东西。好的初始化能让训练从第一轮开始就稳定。
+
+        Kaiming 初始化 (He 初始化):
+            专为 ReLU 激活函数设计的初始化方法。
+            核心思想: 让每一层的输出方差保持稳定, 不随层数增加而消失或爆炸。
+
+            - Conv2d: kaiming_normal_ (mode='fan_out', nonlinearity='relu')
+              fan_out 模式根据输出通道数计算方差, 适合 Conv2d
+            - BatchNorm2d: weight 初始化为 1, bias 初始化为 0
+              (标准做法, BN 层自己会通过运行统计量调整)
+            - Linear: normal_(mean=0, std=0.01)
+              全连接层用较小的正态分布初始化, 避免初始输出过大
+
+        参考: He et al. "Delving Deep into Rectifiers: Surpassing Human-Level
+              Performance on ImageNet Classification" (2015)
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # Kaiming 正态分布初始化, 专为 ReLU 设计
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # BN: weight=1, bias=0, 让初始状态不改变输入分布
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                # 全连接层: 小方差正态分布, 避免初始输出过大
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def get_feature_maps(self, x: torch.Tensor) -> tuple:
+        """
+        提取中间层特征图 (用于可视化卷积核学到了什么)
+
+        用途:
+            - 可视化第 1 层卷积核学到的边缘/笔画检测器
+            - 可视化第 2 层卷积核学到的更高层模式 (弧线、交叉点等)
+            - 帮助理解 CNN 内部的工作原理, 不是"黑盒"
+
+        参数:
+            x: 输入图像, shape=(1, 1, 28, 28) 或 (batch, 1, 28, 28)
+
+        返回:
+            (conv1_features, conv2_features) 元组:
+            - conv1_features: 第 1 层卷积块输出, shape=(batch, 32, 14, 14)
+              32 个特征图, 每个捕捉一种低级模式 (如水平笔画、垂直边缘)
+            - conv2_features: 第 2 层卷积块输出, shape=(batch, 64, 7, 7)
+              64 个特征图, 组合低级模式成更复杂的结构
+        """
+        # features 的前 4 层 = 第 1 个卷积块: Conv→BN→ReLU→Pool
+        # 输入 (1, 28, 28) → 输出 (32, 14, 14)
+        conv1_features = self.features[:4](x)
+        # features 的后 4 层 = 第 2 个卷积块: Conv→BN→ReLU→Pool
+        # 输入 (32, 14, 14) → 输出 (64, 7, 7)
+        conv2_features = self.features[4:](conv1_features)
+        return conv1_features, conv2_features
 
 
 # ============================================================
