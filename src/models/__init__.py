@@ -1,2 +1,9 @@
-# 模型模块 - 待算法工程师编写
-# 可实现: SVM, 随机森林, CNN 等
+from .cnn import MNISTCNN, FocalLoss, count_parameters
+from .train import run_full_pipeline, set_seed
+from .evaluate import evaluate_model, compare_models, print_evaluation
+
+__all__ = [
+    "MNISTCNN", "FocalLoss", "count_parameters",
+    "run_full_pipeline", "set_seed",
+    "evaluate_model", "compare_models", "print_evaluation",
+]
