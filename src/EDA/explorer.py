@@ -12,7 +12,7 @@ Comprehensive exploratory data analysis for MNIST dataset, including:
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Tuple, Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -390,8 +390,7 @@ if __name__ == "__main__":
     print("\n加载MNIST数据...")
     try:
         X_train, y_train, X_test, y_test = load_mnist(
-            preprocess=True,
-            use_mock_on_fail=True
+            preprocess=True
         )
     except Exception as e:
         print(f"数据加载失败: {e}")
