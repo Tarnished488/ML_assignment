@@ -1,2 +1,3 @@
-# 可视化模块 - 待测试可视化组员编写
-# 可实现: EDA分析, 混淆矩阵, GUI界面等
+from .plot import generate_all_plots
+
+__all__ = ["generate_all_plots"]
