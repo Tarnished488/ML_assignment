@@ -25,8 +25,7 @@ ML_assignment/
 │       └── plot.py           # 训练曲线/混淆矩阵/模型对比/错误样本/Grad-CAM
 ├── results/                  # 运行后自动生成的评估结果和图表
 ├── tests/                    # 单元测试
-├── run_all.py                # 一键运行入口（训练 + 评估 + 画图）
-├── main.py                   # 数据预处理入口
+├── main.py                   # 一键运行入口（训练 + 评估 + 画图）
 └── requirements.txt          # 依赖
 ```
 
@@ -36,7 +35,7 @@ ML_assignment/
 
 ```bash
 pip install -r requirements.txt
-python run_all.py
+python main.py
 ```
 
 这会自动完成：下载 MNIST → 预处理 → 特征提取 → 训练 CNN + 3 个基线模型 → 在训练集/验证集/测试集上分别评估 → 生成图表。

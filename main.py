@@ -18,6 +18,7 @@ from src.data.loader import load_mnist, save_processed_data
 from src.data.preprocess import Preprocessor
 from src.features.extractor import FeatureExtractor
 from src.models.train import run_full_pipeline, set_seed, split_dataset
+from src.visualization.plot import generate_all_plots
 from src.EDA import MNISTExplorer
 
 
@@ -44,6 +45,9 @@ def main():
                        help="Enable Exploratory Data Analysis (EDA) after preprocessing")
     parser.add_argument("--eda-output", type=str, default="eda_results",
                        help="Output directory for EDA plots (default: eda_results)")
+    parser.add_argument("--no-visualize", dest="visualize", action="store_false",
+                       help="Disable visualization plot generation")
+    parser.set_defaults(visualize=True)
 
     args = parser.parse_args()
 
@@ -177,6 +181,14 @@ def main():
 
             # Save text summary
             _save_summary(results, args.save_dir)
+
+            # Generate visualization plots if enabled
+            if args.visualize:
+                try:
+                    print("\n[Stage 6] Generating visualization plots...")
+                    generate_all_plots(results, X_test, y_test, save_dir=args.save_dir)
+                except Exception as e:
+                    print(f"  Error generating visualization plots: {e}")
 
         except Exception as e:
             print(f"  Error saving models: {e}")
