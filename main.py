@@ -157,12 +157,12 @@ def main():
 
     if not args.skip_preprocess:
         print("加载原始MNIST数据集...")
-        X_train, y_train, X_test, y_test = load_mnist(preprocess=True)
+        X_train, y_train, X_test, y_test = load_mnist(preprocess=False)
 
         # 数据统计信息
         info = get_data_info(X_train, y_train, X_test, y_test)
-        print(f"  训练集: {info['n_train']} 张图像")
-        print(f"  测试集: {info['n_test']} 张图像")
+        print(f"  训练集: {info['train_size']} 张图像")
+        print(f"  测试集: {info['test_size']} 张图像")
         print(f"  标签分布: {info['train_label_dist']}")
     else:
         print("加载已预处理的MNIST数据...")
