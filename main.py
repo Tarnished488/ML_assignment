@@ -1,271 +1,296 @@
 """
-手写数字识别系统 - 主程序
-集成数据加载、预处理、特征提取、模型训练全流程
+Handwritten Digit Recognition System - Main Program
+Integrated workflow: data loading, preprocessing, feature extraction, model training
+Following best practices from run_all.py
 """
 
 import sys
-from pathlib import Path
 import argparse
+import time
+from pathlib import Path
 
-# 添加 src 到路径
+import numpy as np
+
+# Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.data.loader import load_mnist, save_processed_data, get_data_info, load_processed_data
+from src.data.loader import load_mnist, save_processed_data
 from src.data.preprocess import Preprocessor
-from src.features.pipeline import build_feature_dataset
-from src.features.extractor import load_features
-from src.models.train import split_dataset, run_full_pipeline
-
-
-def train_and_evaluate_model(X_train, y_train, X_test, y_test, X_train_features=None, X_test_features=None):
-    """
-    训练并评估机器学习模型（CNN + 基线模型）
-
-    Args:
-        X_train: 训练图像
-        y_train: 训练标签
-        X_test: 测试图像
-        y_test: 测试标签
-        X_train_features: 训练特征（用于基线模型）
-        X_test_features: 测试特征（用于基线模型）
-
-    Returns:
-        dict: 包含所有模型结果
-    """
-    try:
-        import numpy as np
-        from src.models.evaluate import print_evaluation, compare_models
-    except ImportError as e:
-        print(f"错误: 缺少必要的依赖库: {e}")
-        print("请确保已安装所有依赖: pip install -r requirements.txt")
-        return None
-
-    print("\n[模型训练] 准备数据...")
-
-    # 合并训练集和测试集，重新划分 train:val:test = 6:2:2
-    # 这是因为原始MNIST没有验证集，我们需要验证集来做早停
-    X_all = np.concatenate([X_train, X_test], axis=0)
-    y_all = np.concatenate([y_train, y_test], axis=0)
-
-    print(f"  合并后数据: {X_all.shape[0]} 张图像")
-    print("  重新划分为 train:val:test = 6:2:2")
-
-    # 划分数据集
-    X_train_split, y_train_split, X_val_split, y_val_split, X_test_split, y_test_split = split_dataset(
-        X_all, y_all, train_ratio=6/10, val_ratio=2/10, seed=42
-    )
-
-    print(f"  训练集: {X_train_split.shape[0]} 张图像")
-    print(f"  验证集: {X_val_split.shape[0]} 张图像")
-    print(f"  测试集: {X_test_split.shape[0]} 张图像")
-
-    # 准备基线模型的特征数据
-    if X_train_features is not None and X_test_features is not None:
-        print("\n[模型训练] 准备特征数据...")
-        # 同样需要合并并重新划分特征数据
-        X_all_features = np.concatenate([X_train_features, X_test_features], axis=0)
-        y_all_features = np.concatenate([y_train, y_test], axis=0)
-
-        # 使用相同的随机种子划分特征数据
-        X_train_features_split, y_train_features_split, X_val_features_split, y_val_features_split, X_test_features_split, y_test_features_split = split_dataset(
-            X_all_features, y_all_features, train_ratio=6/10, val_ratio=2/10, seed=42
-        )
-
-        print(f"  训练特征: {X_train_features_split.shape}")
-        print(f"  验证特征: {X_val_features_split.shape}")
-        print(f"  测试特征: {X_test_features_split.shape}")
-    else:
-        print("\n[模型训练] 没有特征数据，跳过基线模型训练")
-        X_train_features_split = X_val_features_split = X_test_features_split = None
-
-    # 运行完整训练流程
-    print("\n[模型训练] 开始训练...")
-    results = run_full_pipeline(
-        X_train_split, y_train_split,
-        X_val_split, y_val_split,
-        X_test_split, y_test_split,
-        X_train_features_split, X_val_features_split, X_test_features_split,
-        batch_size=128, epochs=30, lr=0.001, seed=42
-    )
-
-    # 打印测试集结果汇总
-    print("\n" + "=" * 60)
-    print("测试集最终结果汇总")
-    print("=" * 60)
-
-    # 提取测试集结果
-    test_results = None
-    for result_set in results["all_results"]:
-        if result_set["split"] == "测试集":
-            test_results = result_set["results"]
-            break
-
-    if test_results:
-        print(compare_models(test_results))
-        print("\n各模型详细结果:")
-        for result in test_results:
-            print_evaluation(result)
-
-    # 保存模型
-    try:
-        import torch
-        import joblib
-        Path("results").mkdir(parents=True, exist_ok=True)
-
-        # 保存CNN模型
-        torch.save(results["cnn_model"].state_dict(), "results/cnn_model.pth")
-        print(f"\n[模型保存] CNN模型已保存至: results/cnn_model.pth")
-
-        # 保存基线模型
-        for name, bl in results["baseline_results"].items():
-            model_path = f"results/{name.replace(' ', '_').replace('(', '').replace(')', '').replace('=', '_')}.pkl"
-            joblib.dump(bl["model"], model_path)
-            print(f"[模型保存] {name} 模型已保存至: {model_path}")
-
-        # 保存训练结果
-        joblib.dump(results, "results/training_results.pkl")
-        print(f"[模型保存] 完整训练结果已保存至: results/training_results.pkl")
-
-    except Exception as e:
-        print(f"\n[模型保存] 保存模型时出错: {e}")
-
-    return results
+from src.features.extractor import FeatureExtractor
+from src.models.train import run_full_pipeline, set_seed, split_dataset
+from src.visualization.plot import generate_all_plots
+from src.EDA import MNISTExplorer
 
 
 def main():
-    parser = argparse.ArgumentParser(description="手写数字识别系统全流程")
-    parser.add_argument("--skip-preprocess", action="store_true",
-                       help="跳过预处理，使用已保存的预处理数据")
-    parser.add_argument("--skip-features", action="store_true",
-                       help="跳过特征提取，使用已保存的特征数据")
+    # ---- Parse command line arguments ----
+    parser = argparse.ArgumentParser(description="Handwritten Digit Recognition System - Complete Workflow")
+    parser.add_argument("--epochs", type=int, default=30,
+                       help="CNN training epochs (default: 30)")
+    parser.add_argument("--batch-size", type=int, default=128,
+                       help="Batch size (default: 128)")
+    parser.add_argument("--lr", type=float, default=0.001,
+                       help="Learning rate (default: 0.001)")
+    parser.add_argument("--seed", type=int, default=42,
+                       help="Random seed (default: 42)")
+    parser.add_argument("--save-dir", type=str, default="results",
+                       help="Results save directory (default: results)")
     parser.add_argument("--method", default="hog,lbp,shape",
-                       help="特征提取方法: raw, hog, lbp, shape 或逗号分隔的组合")
+                       help="Feature extraction method: raw, hog, lbp, shape or comma-separated combination")
     parser.add_argument("--pca", type=float, default=None,
-                       help="PCA降维: None为不降维, 整数为组件数, 浮点数为保留方差比例")
+                       help="PCA dimension reduction: None for no PCA, integer for component count, float for variance ratio")
     parser.add_argument("--skip-training", action="store_true",
-                       help="跳过模型训练，只执行数据准备")
+                       help="Skip model training, only perform data preparation and feature extraction")
+    parser.add_argument("--eda", action="store_true",
+                       help="Enable Exploratory Data Analysis (EDA) after preprocessing")
+    parser.add_argument("--eda-output", type=str, default="eda_results",
+                       help="Output directory for EDA plots (default: eda_results)")
+    parser.add_argument("--no-visualize", dest="visualize", action="store_false",
+                       help="Disable visualization plot generation")
+    parser.set_defaults(visualize=True)
 
     args = parser.parse_args()
 
+    set_seed(args.seed)
+    start_time = time.time()
+
     print("=" * 60)
-    print("手写数字识别系统 - 全流程集成")
+    print("Handwritten Digit Recognition System - Complete Workflow")
+    print("Data Split: Train:Val:Test = 6:2:2")
     print("=" * 60)
 
-    # ==================== 1. 数据加载 ====================
-    print("\n[阶段1] 数据加载")
-    print("-" * 40)
+    # ==================== 1. Load MNIST data and preprocessing ====================
+    print("\n[Stage 1] Loading MNIST data and preprocessing...")
 
-    if not args.skip_preprocess:
-        print("加载原始MNIST数据集...")
-        X_train, y_train, X_test, y_test = load_mnist(preprocess=False)
+    # Load raw data (no internal preprocessing, we control it ourselves)
+    X_train_raw, y_train_raw, X_test_raw, y_test_raw = load_mnist(
+        data_dir="data/raw", download=True, preprocess=False
+    )
 
-        # 数据统计信息
-        info = get_data_info(X_train, y_train, X_test, y_test)
-        print(f"  训练集: {info['train_size']} 张图像")
-        print(f"  测试集: {info['test_size']} 张图像")
-        print(f"  标签分布: {info['train_label_dist']}")
+    print(f"  Raw data: Train set {X_train_raw.shape}, Test set {X_test_raw.shape}")
+
+    # 应用预处理流水线
+    preprocessor = Preprocessor()
+    X_train_raw = preprocessor.preprocess_pipeline(X_train_raw)
+    X_test_raw = preprocessor.preprocess_pipeline(X_test_raw)
+
+    print(f"  Preprocessing completed: Train set {X_train_raw.shape}, Test set {X_test_raw.shape}")
+
+    # ==================== EDA Stage ====================
+    if args.eda:
+        print("\n[EDA] Exploratory Data Analysis...")
+        eda_output_dir = Path(args.eda_output)
+        eda_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create EDA explorer
+        explorer = MNISTExplorer(X_train_raw, y_train_raw, X_test_raw, y_test_raw)
+
+        # Run comprehensive analysis and save plots to specified directory
+        explorer.run_comprehensive_analysis(output_dir=str(eda_output_dir))
+        print(f"  EDA results saved to: {eda_output_dir}")
+
+    # ==================== 2. Merge data and split train:val:test = 6:2:2 ====================
+    print("\n[Stage 2] Merging data and splitting train:val:test = 6:2:2...")
+
+    # Merge original training set (60000) and test set (10000) into 70000 images
+    X_all = np.concatenate([X_train_raw, X_test_raw], axis=0)
+    y_all = np.concatenate([y_train_raw, y_test_raw], axis=0)
+    print(f"  Total after merging: {X_all.shape[0]} images")
+
+    # Split by ratio: training set 60% / validation set 20% / test set 20%
+    X_train, y_train, X_val, y_val, X_test, y_test = split_dataset(
+        X_all, y_all, train_ratio=6/10, val_ratio=2/10, seed=args.seed
+    )
+
+    print(f"  Training set: {X_train.shape[0]} images")
+    print(f"  Validation set: {X_val.shape[0]} images")
+    print(f"  Test set: {X_test.shape[0]} images")
+
+    # Save preprocessed data (compatible with team member's interface)
+    save_processed_data(X_train, y_train, X_test, y_test)
+    print("  Preprocessed data saved to data/processed/")
+
+    # ==================== 3. Extract features (for baseline models) ====================
+    print("\n[Stage 3] Extracting features...")
+
+    # Parse feature method
+    if "," in args.method:
+        method = tuple(m.strip() for m in args.method.split(","))
     else:
-        print("加载已预处理的MNIST数据...")
-        X_train, y_train, X_test, y_test = load_processed_data()
-        print(f"  训练集: {X_train.shape[0]} 张图像")
-        print(f"  测试集: {X_test.shape[0]} 张图像")
+        method = args.method
 
-    # ==================== 2. 数据预处理 ====================
-    print("\n[阶段2] 数据预处理")
-    print("-" * 40)
+    print(f"  Feature method: {method}")
 
-    if not args.skip_preprocess:
-        print("执行预处理流水线...")
-        preprocessor = Preprocessor()
-        X_train_processed = preprocessor.preprocess_pipeline(X_train)
-        X_test_processed = preprocessor.preprocess_pipeline(X_test)
+    # Create feature extractor
+    extractor = FeatureExtractor()
 
-        print(f"  预处理完成:")
-        print(f"    训练集: {X_train.shape} -> {X_train_processed.shape}")
-        print(f"    测试集: {X_test.shape} -> {X_test_processed.shape}")
+    # Extract training set features
+    X_train_features = extractor.fit_transform(
+        X_train, method=method, pca_components=args.pca
+    )
 
-        # 保存预处理数据
-        print("保存预处理数据...")
-        save_processed_data(X_train_processed, y_train, X_test_processed, y_test)
-        print("  数据已保存至 data/processed/")
-    else:
-        print("跳过预处理，使用已保存的预处理数据")
-        X_train_processed, y_train, X_test_processed, y_test = X_train, y_train, X_test, y_test
+    # Extract validation and test set features
+    X_val_features = extractor.transform(X_val, method=method)
+    X_test_features = extractor.transform(X_test, method=method)
 
-    # ==================== 3. 特征提取 ====================
-    print("\n[阶段3] 特征提取")
-    print("-" * 40)
+    print(f"  Feature dimension: {X_train_features.shape[1]}")
+    print(f"  Training features: {X_train_features.shape}")
+    print(f"  Validation features: {X_val_features.shape}")
+    print(f"  Test features: {X_test_features.shape}")
 
-    if not args.skip_features:
-        print(f"提取特征 (方法: {args.method})...")
+    # 保存特征提取器
+    features_dir = "data/features"
+    Path(features_dir).mkdir(parents=True, exist_ok=True)
+    extractor.save(Path(features_dir) / "feature_extractor.pkl")
+    print(f"  Feature extractor saved to {features_dir}/feature_extractor.pkl")
 
-        # 解析特征方法
-        if "," in args.method:
-            method = tuple(m.strip() for m in args.method.split(","))
-        else:
-            method = args.method
-
-        # 构建特征数据集
-        X_train_features, y_train, X_test_features, y_test = build_feature_dataset(
-            processed_dir="data/processed",
-            save_dir="data/features",
-            method=method,
-            pca_components=args.pca,
-            save_extractor=True
-        )
-
-        print(f"  特征提取完成:")
-        print(f"    训练特征: {X_train_features.shape}")
-        print(f"    测试特征: {X_test_features.shape}")
-        print(f"    特征已保存至 data/features/")
-    else:
-        print("加载已提取的特征...")
-        try:
-            X_train_features, y_train, X_test_features, y_test = load_features("data/features")
-            print(f"  训练特征: {X_train_features.shape}")
-            print(f"  测试特征: {X_test_features.shape}")
-        except Exception as e:
-            print(f"  警告: 加载特征失败: {e}")
-            print("  将跳过特征提取和基线模型训练")
-            X_train_features = X_test_features = None
-
-    # ==================== 4. 模型训练与评估 ====================
-    print("\n[阶段4] 模型训练与评估")
-    print("-" * 40)
-
+    # ==================== 4. Model training and evaluation ====================
     if not args.skip_training:
-        results = train_and_evaluate_model(
-            X_train_processed, y_train,
-            X_test_processed, y_test,
-            X_train_features, X_test_features
+        print("\n[Stage 4] Training CNN + baseline models...")
+
+        # Run complete training pipeline
+        results = run_full_pipeline(
+            X_train, y_train, X_val, y_val, X_test, y_test,
+            X_train_features, X_val_features, X_test_features,
+            batch_size=args.batch_size, epochs=args.epochs, lr=args.lr, seed=args.seed,
         )
+
+        # ==================== 5. 保存结果 ====================
+        print("\n[Stage 5] Saving results...")
+
+        try:
+            import torch
+            import joblib
+
+            # Ensure save directory exists
+            Path(args.save_dir).mkdir(parents=True, exist_ok=True)
+
+            # Save CNN model
+            torch.save(results["cnn_model"].state_dict(), f"{args.save_dir}/cnn_model.pth")
+            print(f"  CNN model saved to: {args.save_dir}/cnn_model.pth")
+
+            # Save baseline models
+            for name, bl in results["baseline_results"].items():
+                model_path = f"{args.save_dir}/{name.replace(' ', '_').replace('(', '').replace(')', '').replace('=', '_')}.pkl"
+                joblib.dump(bl["model"], model_path)
+                print(f"  {name} model saved to: {model_path}")
+
+            # Save training results
+            joblib.dump(results, f"{args.save_dir}/training_results.pkl")
+            print(f"  Complete training results saved to: {args.save_dir}/training_results.pkl")
+
+            # Save text summary
+            _save_summary(results, args.save_dir)
+
+            # Generate visualization plots if enabled
+            if args.visualize:
+                try:
+                    print("\n[Stage 6] Generating visualization plots...")
+                    generate_all_plots(results, X_test, y_test, save_dir=args.save_dir)
+                except Exception as e:
+                    print(f"  Error generating visualization plots: {e}")
+
+        except Exception as e:
+            print(f"  Error saving models: {e}")
+
     else:
-        print("跳过模型训练")
+        print("\n[Stage 4] Skipping model training")
         results = None
 
-    # ==================== 结果汇总 ====================
+    # ==================== Completion ====================
+    total_time = time.time() - start_time
+    minutes, seconds = divmod(total_time, 60)
+
     print("\n" + "=" * 60)
-    print("手写数字识别系统全流程完成!")
-    print("=" * 60)
+    print("Handwritten Digit Recognition System Complete!")
+    print(f"Time elapsed: {int(minutes)} minutes {int(seconds)} seconds")
 
     if results:
-        # 提取测试集准确率
-        test_accuracy = 0.0
+        # Extract test set accuracy
         for result_set in results["all_results"]:
-            if result_set["split"] == "测试集":
-                for result in result_set["results"]:
+            if result_set["split"] == "Test Set":
+                print("\nFinal Test Set Results:")
+                print("-" * 40)
+
+                # Import evaluation functions
+                from src.models.evaluate import compare_models, print_evaluation
+
+                test_results = result_set["results"]
+                print(compare_models(test_results))
+
+                # Display CNN results
+                for result in test_results:
                     if result["model_name"] == "CNN":
-                        test_accuracy = result["accuracy"]
+                        print(f"\nCNN test accuracy: {result['accuracy']:.4f}")
                         break
                 break
-        print(f"最终测试准确率: {test_accuracy:.4f}")
 
-    print("\n输出目录:")
-    print("  data/processed/    - 预处理图像数据")
-    print("  data/features/     - 提取的特征数据")
-    print("  results/           - 训练好的模型和结果")
+    print(f"\nOutput directories:")
+    print(f"  data/processed/    - Preprocessed image data")
+    print(f"  data/features/     - Extracted features and feature extractor")
+    print(f"  {args.save_dir}/      - Trained models and results")
 
     return results
+
+
+def _save_summary(results: dict, save_dir: str):
+    """
+    Save text format results summary
+    Reference implementation from run_all.py
+    """
+    from pathlib import Path
+    Path(save_dir).mkdir(exist_ok=True)
+
+    with open(f"{save_dir}/evaluation_summary.txt", "w", encoding="utf-8") as f:
+        f.write("Handwritten Digit Recognition System - Evaluation Results Summary\n")
+        f.write("Data Split: Train:Val:Test = 6:2:2 (42000:14000:14000)\n")
+        f.write("=" * 60 + "\n\n")
+
+        # Detailed results for three sets
+        for split_info in results["all_results"]:
+            split_name = split_info["split"]
+            split_results = split_info["results"]
+
+            f.write(f"{'='*60}\n")
+            f.write(f"  [{split_name}]\n")
+            f.write(f"{'='*60}\n\n")
+
+            for r in split_results:
+                f.write(f"  Model: {r['model_name']}\n")
+                f.write(f"    Accuracy:  {r['accuracy']:.4f}\n")
+                f.write(f"    Precision: {r['precision_macro']:.4f} (macro)\n")
+                f.write(f"    Recall:    {r['recall_macro']:.4f} (macro)\n")
+                f.write(f"    F1-Score:  {r['f1_macro']:.4f} (macro)\n\n")
+
+                f.write("    Per-class metrics:\n")
+                f.write(r["report"] + "\n")
+                f.write("-" * 50 + "\n\n")
+
+        # Three-set Accuracy summary comparison table
+        f.write(f"\n{'='*60}\n")
+        f.write("  [Three-set Accuracy Summary]\n")
+        f.write(f"{'='*60}\n\n")
+
+        # Table header
+        header = f"{'Model':<25}"
+        for split_info in results["all_results"]:
+            header += f" {split_info['split']:>10}"
+        f.write(header + "\n")
+        f.write("-" * len(header) + "\n")
+
+        # Each model row
+        model_names = [r["model_name"] for r in results["all_results"][0]["results"]]
+        for model_name in model_names:
+            row = f"{model_name:<25}"
+            for split_info in results["all_results"]:
+                for r in split_info["results"]:
+                    if r["model_name"] == model_name:
+                        row += f" {r['accuracy']:>10.4f}"
+                        break
+            f.write(row + "\n")
+        f.write("-" * len(header) + "\n")
+
+    print(f"  Results summary saved: {save_dir}/evaluation_summary.txt")
 
 
 if __name__ == "__main__":

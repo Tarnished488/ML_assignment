@@ -1,4 +1,40 @@
 __pycache__/
 *.pyc
+
+# Data directories
 data/raw/
 data/processed/
+data/features/
+
+# Results directories
+results/
+eda_results/
+eda_test/
+
+# Large model files
+*.pkl
+*.pth
+*.npy
+*.npz
+
+# Training results
+training_results.pkl
+cnn_model.pth
+feature_extractor.pkl
+
+# EDA output images
+label_distribution.png
+mean_std_images.png
+pca_scatter.png
+pixel_intensity.png
+
+# Visualization output images
+training_history.png
+confusion_matrix_*.png
+model_comparison.png
+misclassified_*.png
+per_class_accuracy.png
+gradcam*.png
+
+# External folders (if they get created)
+Assignment/
