@@ -27,6 +27,10 @@ label_distribution.png
 mean_std_images.png
 pca_scatter.png
 pixel_intensity.png
+sample_grid.png
+digit_correlation.png
+confusing_pairs.png
+tsne.png
 
 # Visualization output images
 training_history.png
