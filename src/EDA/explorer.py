@@ -160,6 +160,218 @@ class MNISTExplorer:
 
 
 
+    def plot_sample_grid(self, save_path: Optional[str] = None, n_samples: int = 10):
+        """
+        Plot a grid of sample images for each digit class
+
+        Shows n_samples example images per digit 0-9, arranged in a 10×n_samples grid.
+        This is a standard first step in MNIST EDA to qualitatively inspect the data.
+
+        Args:
+            n_samples: Number of samples per digit to show (default: 10)
+            save_path: Optional path to save the plot
+        """
+        fig, axes = plt.subplots(10, n_samples, figsize=(n_samples * 1.5, 15))
+        fig.suptitle(f'Sample Images per Digit ({n_samples} per class)', fontsize=16, fontweight='bold')
+
+        for digit in range(10):
+            mask = self.y_train == digit
+            digit_images = self.X_train[mask]
+            indices = np.random.choice(len(digit_images), n_samples, replace=False)
+
+            for col, idx in enumerate(indices):
+                ax = axes[digit, col]
+                ax.imshow(digit_images[idx], cmap='gray')
+                ax.axis('off')
+                if col == 0:
+                    ax.set_ylabel(f'Digit {digit}', fontsize=12, fontweight='bold')
+
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Sample grid plot saved to: {save_path}")
+        plt.show()
+
+    def plot_digit_correlation_heatmap(self, save_path: Optional[str] = None):
+        """
+        Plot correlation heatmap between mean images of each digit class
+
+        This reveals which digits look similar to each other on average.
+        High correlation between digits like 7 and 9 suggests they may be
+        commonly confused — a valuable insight for model interpretation.
+        """
+        # Compute mean image for each digit
+        mean_images = []
+        for digit in range(10):
+            mask = self.y_train == digit
+            if mask.sum() > 0:
+                mean_img = self.X_train[mask].mean(axis=0).flatten()
+                mean_images.append(mean_img)
+
+        mean_images = np.array(mean_images)  # shape: (10, 784)
+
+        # Compute correlation matrix
+        corr_matrix = np.corrcoef(mean_images)
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        im = ax.imshow(corr_matrix, cmap='RdYlBu_r', vmin=0.5, vmax=1.0, interpolation='nearest')
+        fig.colorbar(im, ax=ax, fraction=0.046, label='Correlation')
+
+        # Annotate with correlation values
+        for i in range(10):
+            for j in range(10):
+                ax.text(j, i, f'{corr_matrix[i, j]:.3f}',
+                        ha='center', va='center', fontsize=9,
+                        color='white' if corr_matrix[i, j] > 0.8 else 'black')
+
+        ax.set_xticks(range(10))
+        ax.set_yticks(range(10))
+        ax.set_xticklabels([str(i) for i in range(10)])
+        ax.set_yticklabels([str(i) for i in range(10)])
+        ax.set_xlabel('Digit', fontsize=12)
+        ax.set_ylabel('Digit', fontsize=12)
+        ax.set_title('Correlation Between Mean Digit Images', fontsize=14, fontweight='bold')
+
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Digit correlation heatmap saved to: {save_path}")
+        plt.show()
+
+        # Print analysis
+        print("\nDigit Correlation Analysis:")
+        print("Most similar digit pairs (highest correlation):")
+        pairs = []
+        for i in range(10):
+            for j in range(i + 1, 10):
+                pairs.append((i, j, corr_matrix[i, j]))
+        pairs.sort(key=lambda x: -x[2])
+        for i, j, corr in pairs[:5]:
+            print(f"  Digit {i} <-> Digit {j}: {corr:.4f}")
+
+    def plot_tsne(self, save_path: Optional[str] = None, n_samples: int = 3000, perplexity: int = 30):
+        """
+        Plot t-SNE visualization of MNIST data
+
+        t-SNE is a non-linear dimensionality reduction technique that often
+        reveals better-separated clusters than PCA for image data.
+
+        Args:
+            n_samples: Number of samples to use (default: 3000, for speed)
+            perplexity: t-SNE perplexity parameter (default: 30)
+            save_path: Optional path to save the plot
+        """
+        try:
+            from sklearn.manifold import TSNE
+        except ImportError:
+            print("Warning: scikit-learn not installed, t-SNE plot unavailable.")
+            return
+
+        # Subsample for speed (cap at dataset size)
+        n_samples = min(n_samples, len(self.X_train))
+        indices = np.random.choice(len(self.X_train), n_samples, replace=False)
+        X_subset = self.X_train[indices].reshape(n_samples, -1)
+        y_subset = self.y_train[indices]
+
+        print(f"  Running t-SNE (perplexity={perplexity}, samples={n_samples})...")
+
+        # Perform t-SNE
+        tsne = TSNE(n_components=2, perplexity=perplexity,
+                    random_state=42, max_iter=1000)
+        X_tsne = tsne.fit_transform(X_subset)
+
+        # Create scatter plot
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        colors = plt.cm.tab10(np.arange(10))
+
+        for digit in range(10):
+            mask = y_subset == digit
+            if mask.sum() > 0:
+                ax.scatter(X_tsne[mask, 0], X_tsne[mask, 1],
+                          c=[colors[digit]], label=f'Digit {digit}',
+                          alpha=0.6, s=5)
+
+        ax.set_xlabel('t-SNE Component 1', fontsize=12)
+        ax.set_ylabel('t-SNE Component 2', fontsize=12)
+        ax.set_title(f't-SNE Visualization of MNIST (perplexity={perplexity})',
+                    fontsize=14, fontweight='bold')
+        ax.legend(loc='best', fontsize=10, markerscale=3)
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"t-SNE plot saved to: {save_path}")
+        plt.show()
+
+        print(f"  t-SNE completed. Final error: {tsne.kl_divergence_:.2f}")
+
+    def plot_confusing_pairs(self, save_path: Optional[str] = None, n_pairs: int = 6):
+        """
+        Visualize potential confusing digit pairs by showing their mean images side by side
+
+        This reveals structural similarities between digit pairs that may cause
+        model confusion (e.g., 7 vs 9, 4 vs 9, 3 vs 8).
+
+        Args:
+            n_pairs: Number of confusing pairs to show (default: 6)
+            save_path: Optional path to save the plot
+        """
+        # Compute mean images for each digit
+        mean_images = {}
+        for digit in range(10):
+            mask = self.y_train == digit
+            if mask.sum() > 0:
+                mean_images[digit] = self.X_train[mask].mean(axis=0)
+
+        # Find most correlated pairs (highest similarity = most confusing)
+        corr_matrix = np.zeros((10, 10))
+        for i in range(10):
+            for j in range(10):
+                corr_matrix[i, j] = np.corrcoef(
+                    mean_images[i].flatten(), mean_images[j].flatten()
+                )[0, 1]
+
+        pairs = []
+        for i in range(10):
+            for j in range(i + 1, 10):
+                pairs.append((i, j, corr_matrix[i, j]))
+        pairs.sort(key=lambda x: -x[2])
+
+        n_show = min(n_pairs, len(pairs))
+        fig, axes = plt.subplots(n_show, 3, figsize=(9, n_show * 2.5))
+        fig.suptitle('Most Confusing Digit Pairs — Mean Image Comparison',
+                    fontsize=14, fontweight='bold')
+
+        for row in range(n_show):
+            d1, d2, corr = pairs[row]
+
+            # Mean image of digit 1
+            axes[row, 0].imshow(mean_images[d1], cmap='gray')
+            axes[row, 0].set_title(f'Digit {d1}', fontsize=11)
+            axes[row, 0].axis('off')
+
+            # Mean image of digit 2
+            axes[row, 1].imshow(mean_images[d2], cmap='gray')
+            axes[row, 1].set_title(f'Digit {d2}', fontsize=11)
+            axes[row, 1].axis('off')
+
+            # Difference image
+            diff = np.abs(mean_images[d1] - mean_images[d2])
+            im = axes[row, 2].imshow(diff, cmap='hot')
+            axes[row, 2].set_title(f'Difference (r={corr:.3f})', fontsize=11)
+            axes[row, 2].axis('off')
+
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Confusing pairs plot saved to: {save_path}")
+        plt.show()
+
+        print("\nTop Confusing Digit Pairs (highest correlation -> most confusing):")
+        for i, (d1, d2, corr) in enumerate(pairs[:n_pairs]):
+            print(f"  {i+1}. Digit {d1} <-> Digit {d2}: correlation = {corr:.4f}")
+
     def analyze_pixel_intensity(self, save_path: Optional[str] = None):
         """Analyze pixel intensity distribution"""
         # 将图像展平
@@ -309,11 +521,15 @@ class MNISTExplorer:
 
     def run_comprehensive_analysis(self, output_dir: Optional[str] = None):
         """
-        Run comprehensive EDA analysis with 4 main steps:
+        Run comprehensive EDA analysis with 8 main steps:
         1. Label distribution analysis
-        2. Mean and standard deviation images
-        3. Pixel value histogram analysis
-        4. PCA scatter plot visualization
+        2. Sample image grid per digit
+        3. Mean and standard deviation images
+        4. Digit correlation heatmap
+        5. Confusing digit pairs analysis
+        6. Pixel value histogram analysis
+        7. PCA scatter plot visualization
+        8. t-SNE visualization
 
         Args:
             output_dir: Output directory for saving plots
@@ -329,29 +545,61 @@ class MNISTExplorer:
         else:
             self.plot_label_distribution()
 
-        # 2. Mean and standard deviation images
-        print("\n2. Mean and Standard Deviation Images")
+        # 2. Sample image grid
+        print("\n2. Sample Image Grid per Digit")
         print("-" * 40)
         if output_dir:
-            self.plot_mean_and_std_images(f"{output_dir}/mean_std_images.png")
+            self.plot_sample_grid(save_path=f"{output_dir}/sample_grid.png")
+        else:
+            self.plot_sample_grid()
+
+        # 3. Mean and standard deviation images
+        print("\n3. Mean and Standard Deviation Images")
+        print("-" * 40)
+        if output_dir:
+            self.plot_mean_and_std_images(save_path=f"{output_dir}/mean_std_images.png")
         else:
             self.plot_mean_and_std_images()
 
-        # 3. Pixel value histogram analysis
-        print("\n3. Pixel Value Histogram Analysis")
+        # 4. Digit correlation heatmap
+        print("\n4. Digit Correlation Heatmap")
+        print("-" * 40)
+        if output_dir:
+            self.plot_digit_correlation_heatmap(save_path=f"{output_dir}/digit_correlation.png")
+        else:
+            self.plot_digit_correlation_heatmap()
+
+        # 5. Confusing digit pairs
+        print("\n5. Confusing Digit Pairs Analysis")
+        print("-" * 40)
+        if output_dir:
+            self.plot_confusing_pairs(save_path=f"{output_dir}/confusing_pairs.png")
+        else:
+            self.plot_confusing_pairs()
+
+        # 6. Pixel value histogram analysis
+        print("\n6. Pixel Value Histogram Analysis")
         print("-" * 40)
         if output_dir:
             self.analyze_pixel_intensity(save_path=f"{output_dir}/pixel_intensity.png")
         else:
             self.analyze_pixel_intensity()
 
-        # 4. PCA scatter plot
-        print("\n4. PCA Scatter Plot Visualization")
+        # 7. PCA scatter plot
+        print("\n7. PCA Scatter Plot Visualization")
         print("-" * 40)
         if output_dir:
             self.plot_pca_scatter(save_path=f"{output_dir}/pca_scatter.png")
         else:
             self.plot_pca_scatter()
+
+        # 8. t-SNE visualization
+        print("\n8. t-SNE Visualization")
+        print("-" * 40)
+        if output_dir:
+            self.plot_tsne(save_path=f"{output_dir}/tsne.png")
+        else:
+            self.plot_tsne()
 
         print("\nExploratory Data Analysis Complete!")
 
