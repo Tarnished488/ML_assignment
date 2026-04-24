@@ -1,36 +1,36 @@
 """
-一键运行入口
+One-click Run Entry
 
-这是整个项目的总入口, 运行这一条命令就能完成全部流程:
+This is the main entry point for the entire project. Run this single command to complete the full pipeline:
 
     python run_all.py
 
-=== 完整流程 (5 步) ===
+=== Full Pipeline (5 Steps) ===
 
-Step 1: 加载 MNIST 数据 + 预处理 (降噪/二值化/中心化)
-Step 2: 合并全部 70000 张图, 按 6:2:2 重新划分 (42000 + 14000 + 14000)
-Step 3: 提取 HOG+LBP+Shape 特征 (供基线模型使用)
-Step 4: 训练 CNN + 3 个基线模型, 在三个集合上分别评估
-Step 5: 生成可视化图表 + 保存结果摘要
+Step 1: Load MNIST data + preprocessing (denoising / binarization / centering)
+Step 2: Merge all 70000 images, re-split at 6:2:2 (42000 + 14000 + 14000)
+Step 3: Extract HOG+LBP+Shape features (for baseline models)
+Step 4: Train CNN + 3 baseline models, evaluate on all three sets
+Step 5: Generate visualization plots + save results summary
 
-=== 数据划分 ===
+=== Data Split ===
 
-训练集:验证集:测试集 = 6:2:2 (42000:14000:14000)
+Train:Val:Test = 6:2:2 (42000:14000:14000)
 
-为什么把原始的 60000+10000 合并再分:
-- 原始 MNIST 没有验证集, 只有训练集和测试集
-- 我们需要验证集来做早停 (防止过拟合)
-- 所以把全部 70000 张合并后, 按比例随机重新划分
+Why merge the original 60000+10000 and re-split:
+- Original MNIST has no validation set, only training and test sets
+- We need a validation set for early stopping (to prevent overfitting)
+- So we merge all 70000 images and randomly re-split by ratio
 
-=== 用法 ===
+=== Usage ===
 
-# 默认 30 epochs (完整训练)
+# Default 30 epochs (full training)
 python run_all.py
 
-# 快速测试 (3 epochs, 几分钟就跑完)
+# Quick test (3 epochs, done in a few minutes)
 python run_all.py --epochs 3 --batch-size 256
 
-# 自定义参数
+# Custom parameters
 python run_all.py --epochs 20 --lr 0.0005 --batch-size 64
 """
 
@@ -41,103 +41,103 @@ from pathlib import Path
 
 import numpy as np
 
-# 把项目根目录加到 Python 搜索路径, 这样才能 import src.xxx
+# Add project root to Python search path so src.xxx can be imported
 sys.path.insert(0, str(Path(__file__).parent))
 
-# 导入各模块
-from src.data.loader import load_mnist, save_processed_data      # 数据加载
-from src.data.preprocess import Preprocessor                       # 数据预处理
-from src.features.extractor import FeatureExtractor                # 特征提取
-from src.models.train import run_full_pipeline, set_seed, split_dataset  # 模型训练
-from src.visualization.plot import generate_all_plots              # 可视化
+# Import modules
+from src.data.loader import load_mnist, save_processed_data      # Data loading
+from src.data.preprocess import Preprocessor                       # Data preprocessing
+from src.features.extractor import FeatureExtractor                # Feature extraction
+from src.models.train import run_full_pipeline, set_seed, split_dataset  # Model training
+from src.visualization.plot import generate_all_plots              # Visualization
 
 
 def main():
-    # ---- 解析命令行参数 ----
-    parser = argparse.ArgumentParser(description="MNIST 手写数字识别 - 完整流程")
-    parser.add_argument("--epochs", type=int, default=30, help="CNN 训练轮数 (默认 30)")
-    parser.add_argument("--batch-size", type=int, default=128, help="批次大小 (默认 128)")
-    parser.add_argument("--lr", type=float, default=0.001, help="学习率 (默认 0.001)")
-    parser.add_argument("--seed", type=int, default=42, help="随机种子 (默认 42)")
-    parser.add_argument("--save-dir", type=str, default="results", help="结果保存目录")
+    # ---- Parse command line arguments ----
+    parser = argparse.ArgumentParser(description="MNIST Handwritten Digit Recognition - Full Pipeline")
+    parser.add_argument("--epochs", type=int, default=30, help="CNN training epochs (default 30)")
+    parser.add_argument("--batch-size", type=int, default=128, help="Batch size (default 128)")
+    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate (default 0.001)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed (default 42)")
+    parser.add_argument("--save-dir", type=str, default="results", help="Results save directory")
     args = parser.parse_args()
 
     set_seed(args.seed)
     start_time = time.time()
 
     print("=" * 60)
-    print("  MNIST 手写数字识别 - 自动化训练与评估")
-    print("  数据划分: 训练集:验证集:测试集 = 6:2:2")
+    print("  MNIST Handwritten Digit Recognition - Automated Training & Evaluation")
+    print("  Data Split: Train:Val:Test = 6:2:2")
     print("=" * 60)
 
     # ================================================================
-    # Step 1: 加载 MNIST 数据并预处理
+    # Step 1: Load MNIST data and preprocess
     # ================================================================
-    print("\n[Step 1/5] 加载 MNIST 数据并预处理...")
+    print("\n[Step 1/5] Loading MNIST data and preprocessing...")
 
-    # load_mnist: 下载 (首次) 并加载 MNIST 数据
-    # data_dir: 数据存放目录
-    # download: 如果数据不存在, 自动从网络下载
-    # preprocess=False: 先不做预处理, 我们自己控制预处理流程
+    # load_mnist: download (first time) and load MNIST data
+    # data_dir: data storage directory
+    # download: automatically download from network if data does not exist
+    # preprocess=False: skip internal preprocessing, we control the pipeline ourselves
     X_train_raw, y_train_raw, X_test_raw, y_test_raw = load_mnist(
         data_dir="data/raw", download=True, preprocess=False
     )
 
-    # 预处理: 降噪 (中值滤波) → 二值化 (阈值 0.3) → 中心化 (移到画布中央)
+    # Preprocessing: denoising (median filter) -> binarization (threshold 0.3) -> centering (move to canvas center)
     preprocessor = Preprocessor()
     X_train_raw = preprocessor.preprocess_pipeline(X_train_raw)
     X_test_raw = preprocessor.preprocess_pipeline(X_test_raw)
-    print(f"  原始数据: 训练集 {X_train_raw.shape}, 测试集 {X_test_raw.shape}")
+    print(f"  Raw data: Train set {X_train_raw.shape}, Test set {X_test_raw.shape}")
 
     # ================================================================
-    # Step 2: 合并后按 6:2:2 重新划分
+    # Step 2: Merge and re-split at 6:2:2
     # ================================================================
-    print("\n[Step 2/5] 合并数据并按 train:val:test = 6:2:2 划分...")
+    print("\n[Step 2/5] Merging data and splitting at train:val:test = 6:2:2...")
 
-    # 把原始的训练集 (60000) 和测试集 (10000) 合并成 70000 张
+    # Merge original training set (60000) and test set (10000) into 70000 images
     X_all = np.concatenate([X_train_raw, X_test_raw], axis=0)
     y_all = np.concatenate([y_train_raw, y_test_raw], axis=0)
-    print(f"  合并后总量: {X_all.shape[0]} 张图像")
+    print(f"  Total after merging: {X_all.shape[0]} images")
 
-    # 按比例划分: 训练集 60% / 验证集 20% / 测试集 20%
+    # Split by ratio: training 60% / validation 20% / test 20%
     X_train, y_train, X_val, y_val, X_test, y_test = split_dataset(
         X_all, y_all, train_ratio=6/10, val_ratio=2/10, seed=args.seed
     )
-    print(f"  训练集: {X_train.shape[0]}, 验证集: {X_val.shape[0]}, 测试集: {X_test.shape[0]}")
+    print(f"  Training set: {X_train.shape[0]}, Validation set: {X_val.shape[0]}, Test set: {X_test.shape[0]}")
 
-    # 保存预处理数据 (兼容组员的接口, 组员可能需要这些数据)
+    # Save preprocessed data (compatible with team member's interface)
     save_processed_data(X_train, y_train, X_test, y_test)
 
     # ================================================================
-    # Step 3: 提取特征 (供基线模型使用)
+    # Step 3: Extract features (for baseline models)
     # ================================================================
-    print("\n[Step 3/5] 提取 HOG+LBP+Shape 特征...")
+    print("\n[Step 3/5] Extracting HOG+LBP+Shape features...")
 
-    # FeatureExtractor: 组员写的特征提取器
-    # HOG (梯度方向直方图): 提取笔画方向信息, 324 维
-    # LBP (局部二值模式): 提取纹理信息, 10 维
-    # Shape (形状统计): 宽高比、重心、投影等, 71 维
-    # 合计 405 维
+    # FeatureExtractor: feature extractor written by team member
+    # HOG (Histogram of Oriented Gradients): stroke direction info, 324 dims
+    # LBP (Local Binary Pattern): texture info, 10 dims
+    # Shape (shape statistics): aspect ratio, centroid, projections, etc., 71 dims
+    # Total: 405 dims
     extractor = FeatureExtractor()
 
-    # fit_transform: 在训练集上拟合并转换 (计算必要的统计量)
+    # fit_transform: fit on training set and transform (compute necessary statistics)
     X_train_features = extractor.fit_transform(
         X_train, method=("hog", "lbp", "shape"), pca_components=None
     )
-    # transform: 用训练集上拟合好的参数, 转换验证集和测试集
+    # transform: use parameters fitted on training set to transform validation and test sets
     X_val_features = extractor.transform(X_val, method=("hog", "lbp", "shape"))
     X_test_features = extractor.transform(X_test, method=("hog", "lbp", "shape"))
-    print(f"  特征维度: {X_train_features.shape[1]}")
+    print(f"  Feature dimension: {X_train_features.shape[1]}")
 
     # ================================================================
-    # Step 4: 训练模型 + 三集评估
+    # Step 4: Train models + evaluate on three sets
     # ================================================================
-    print("\n[Step 4/5] 训练 CNN + 基线模型, 并在三个集合上分别评估...")
+    print("\n[Step 4/5] Training CNN + baseline models and evaluating on all three sets...")
 
-    # run_full_pipeline 做的事:
-    # 1. 训练 CNN (PyTorch, Focal Loss + Label Smoothing)
-    # 2. 训练 KNN / Logistic Regression / Random Forest (sklearn)
-    # 3. 在训练集、验证集、测试集上分别评估所有模型
+    # run_full_pipeline does:
+    # 1. Train CNN (PyTorch, Focal Loss + Label Smoothing)
+    # 2. Train KNN / Logistic Regression / Random Forest (sklearn)
+    # 3. Evaluate all models on training, validation, and test sets
     results = run_full_pipeline(
         X_train, y_train, X_val, y_val, X_test, y_test,
         X_train_features, X_val_features, X_test_features,
@@ -145,80 +145,80 @@ def main():
     )
 
     # ================================================================
-    # Step 5: 生成可视化 + 保存摘要
+    # Step 5: Generate visualizations + save summary
     # ================================================================
-    print("\n[Step 5/5] 生成可视化图表并保存结果摘要...")
+    print("\n[Step 5/5] Generating visualization plots and saving results summary...")
 
-    # generate_all_plots: 生成全部图表 (训练曲线、混淆矩阵、对比图、Grad-CAM 等)
+    # generate_all_plots: generate all plots (training curves, confusion matrices, comparison charts, Grad-CAM, etc.)
     generate_all_plots(results, X_test, y_test, save_dir=args.save_dir)
 
-    # _save_summary: 保存文本格式的评估结果摘要
+    # _save_summary: save text format evaluation results summary
     _save_summary(results, args.save_dir)
 
-    # ---- 完成 ----
+    # ---- Done ----
     total_time = time.time() - start_time
     minutes, seconds = divmod(total_time, 60)
     print(f"\n{'='*60}")
-    print(f"  全部完成! 耗时: {int(minutes)}分 {int(seconds)}秒")
-    print(f"  结果保存在: {args.save_dir}/")
+    print(f"  All done! Time elapsed: {int(minutes)} min {int(seconds)} sec")
+    print(f"  Results saved in: {args.save_dir}/")
     print(f"{'='*60}")
 
 
 def _save_summary(results: dict, save_dir: str):
     """
-    保存文本格式的结果摘要到 evaluation_summary.txt
+    Save text format results summary to evaluation_summary.txt
 
-    摘要包含:
-        1. 每个集合 (训练/验证/测试) 的每个模型的详细指标
-        2. 三集合 Accuracy 汇总对比表
-        3. 过拟合分析 (训练-验证准确率差距)
+    Summary includes:
+        1. Detailed metrics for each model on each set (train/val/test)
+        2. Three-set Accuracy summary comparison table
+        3. Overfitting analysis (train-val accuracy gap)
 
-    参数:
-        results: run_full_pipeline() 的返回值
-        save_dir: 保存目录
+    Args:
+        results: Return value from run_full_pipeline()
+        save_dir: Save directory
     """
     from pathlib import Path
     Path(save_dir).mkdir(exist_ok=True)
 
     with open(f"{save_dir}/evaluation_summary.txt", "w", encoding="utf-8") as f:
-        f.write("MNIST 手写数字识别 - 评估结果摘要\n")
-        f.write("数据划分: 训练集:验证集:测试集 = 6:2:2 (42000:14000:14000)\n")
-        f.write("损失函数: Focal Loss (gamma=2.0) + Label Smoothing (0.1)\n")
+        f.write("MNIST Handwritten Digit Recognition - Evaluation Results Summary\n")
+        f.write("Data Split: Train:Val:Test = 6:2:2 (42000:14000:14000)\n")
+        f.write("Loss Function: Focal Loss (gamma=2.0) + Label Smoothing (0.1)\n")
         f.write("=" * 60 + "\n\n")
 
-        # ---- Part 1: 三个集合的详细结果 ----
+        # ---- Part 1: Detailed results for three sets ----
         for split_info in results["all_results"]:
             split_name = split_info["split"]
             split_results = split_info["results"]
 
             f.write(f"{'='*60}\n")
-            f.write(f"  【{split_name}】\n")
+            f.write(f"  [{split_name}]\n")
             f.write(f"{'='*60}\n\n")
 
             for r in split_results:
-                f.write(f"  模型: {r['model_name']}\n")
+                f.write(f"  Model: {r['model_name']}\n")
                 f.write(f"    Accuracy:  {r['accuracy']:.4f}\n")
                 f.write(f"    Precision: {r['precision_macro']:.4f} (macro)\n")
                 f.write(f"    Recall:    {r['recall_macro']:.4f} (macro)\n")
                 f.write(f"    F1-Score:  {r['f1_macro']:.4f} (macro)\n\n")
 
-                f.write("    各类别指标:\n")
+                f.write("    Per-class metrics:\n")
                 f.write(r["report"] + "\n")
                 f.write("-" * 50 + "\n\n")
 
-        # ---- Part 2: 三集合 Accuracy 汇总对比表 ----
+        # ---- Part 2: Three-set Accuracy summary comparison table ----
         f.write(f"\n{'='*60}\n")
-        f.write("  【三集合 Accuracy 汇总】\n")
+        f.write("  [Three-set Accuracy Summary]\n")
         f.write(f"{'='*60}\n\n")
 
-        # 表头
-        header = f"{'模型':<25}"
+        # Table header
+        header = f"{'Model':<25}"
         for split_info in results["all_results"]:
             header += f" {split_info['split']:>10}"
         f.write(header + "\n")
         f.write("-" * len(header) + "\n")
 
-        # 每个模型一行
+        # One row per model
         model_names = [r["model_name"] for r in results["all_results"][0]["results"]]
         for model_name in model_names:
             row = f"{model_name:<25}"
@@ -230,22 +230,22 @@ def _save_summary(results: dict, save_dir: str):
             f.write(row + "\n")
         f.write("-" * len(header) + "\n")
 
-        # ---- Part 3: 过拟合分析 ----
+        # ---- Part 3: Overfitting analysis ----
         history = results["history"]
         if history["train_acc"] and history["val_acc"]:
             gap = history["train_acc"][-1] - history["val_acc"][-1]
-            f.write(f"\n  过拟合分析:\n")
-            f.write(f"    最终训练准确率: {history['train_acc'][-1]:.2f}%\n")
-            f.write(f"    最终验证准确率: {history['val_acc'][-1]:.2f}%\n")
-            f.write(f"    训练-验证差距: {gap:.2f}%\n")
+            f.write(f"\n  Overfitting Analysis:\n")
+            f.write(f"    Final training accuracy: {history['train_acc'][-1]:.2f}%\n")
+            f.write(f"    Final validation accuracy: {history['val_acc'][-1]:.2f}%\n")
+            f.write(f"    Train-val gap: {gap:.2f}%\n")
             if gap > 5:
-                f.write("    可能存在过拟合, 建议: 增加数据增强、增大 Dropout、减少参数\n")
+                f.write("    Possible overfitting. Suggestions: increase data augmentation, increase Dropout, reduce parameters\n")
             elif gap < -3:
-                f.write("    训练准确率低于验证准确率 (数据增强+正则化导致), 模型泛化良好\n")
+                f.write("    Training accuracy is lower than validation accuracy (due to data augmentation + regularization). Model generalizes well\n")
             else:
-                f.write("    过拟合程度较低, 模型泛化良好\n")
+                f.write("    Low overfitting level. Model generalizes well\n")
 
-    print(f"  结果摘要已保存: {save_dir}/evaluation_summary.txt")
+    print(f"  Results summary saved: {save_dir}/evaluation_summary.txt")
 
 
 if __name__ == "__main__":

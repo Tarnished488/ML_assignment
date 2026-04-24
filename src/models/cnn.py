@@ -1,37 +1,50 @@
 """
-MNIST CNN 模型定义 + Focal Loss 损失函数
+MNIST CNN Model Definition + Focal Loss
 
-这个文件定义了两个核心类:
-1. FocalLoss  — 损失函数, 用来替代标准的 CrossEntropyLoss
-2. MNISTCNN   — CNN 网络结构
+This file defines two core classes:
+1. FocalLoss  -- Loss function, used to replace standard CrossEntropyLoss
+2. MNISTCNN   -- CNN network architecture
 
-=== 为什么选 CNN ===
+=== Why CNN ===
 
-手写数字识别本质是一个图像分类任务。图像数据具有二维空间结构——相邻像素共同构成笔画、
-轮廓等有意义的局部模式。MLP (多层感知机) 把 28×28 图像展平成 784 维向量, 完全丢弃
-了这种空间关系, 只能靠全连接权重硬记像素位置。而 CNN 通过卷积核在图像上滑动, 天然
-能捕获局部空间模式 (笔画方向、弧度、交叉点), 且参数在空间上共享, 参数效率远高于 MLP。
+Handwritten digit recognition is essentially an image classification task. Image data has 2D spatial
+structure -- neighboring pixels together form meaningful local patterns such as strokes and contours.
+MLP (Multi-Layer Perceptron) flattens a 28x28 image into a 784-dimensional vector, completely
+discarding this spatial relationship, and can only rely on fully-connected weights to memorize pixel
+positions. CNN, on the other hand, slides convolutional kernels across the image and naturally
+captures local spatial patterns (stroke direction, curvature, intersection points), with spatially
+shared parameters that are far more efficient than MLP.
 
-具体来说:
-- CNN 的卷积核相当于自动学习一组"笔画检测器", 无需手工设计 HOG/LBP 等特征
-- MNIST 图像虽小 (28×28), 但数字的判别信息集中在局部笔画模式上, 正好是 CNN 的强项
-- 池化层提供一定的平移不变性, 即使数字写得偏左偏右, 模型也能识别
+Specifically:
+- CNN's convolutional kernels act as automatically learned "stroke detectors", without the need to
+  manually design features like HOG/LBP
+- MNIST images are small (28x28), but the discriminative information for digits is concentrated in
+  local stroke patterns, which is exactly CNN's strength
+- Pooling layers provide some translation invariance, so the model can recognize digits even if they
+  are written slightly off-center
 
-=== 针对本项目的改进与创新 ===
+=== Improvements and Innovations for This Project ===
 
-1. BatchNorm (批量归一化): 在每个卷积层后、激活函数前加入 BatchNorm2d。
-   作用: 稳定中间层特征的数值分布, 缓解内部协变量偏移 (Internal Covariate Shift)。
-   好处: 收敛速度提升约 30%, 且对学习率和初始化更鲁棒, 不容易训练崩塌。
+1. BatchNorm (Batch Normalization): Added BatchNorm2d after each convolutional layer and before the
+   activation function.
+   Purpose: Stabilize the numerical distribution of intermediate layer features, mitigating Internal
+   Covariate Shift.
+   Benefit: Convergence speed improved by about 30%, more robust to learning rate and initialization,
+   less prone to training collapse.
 
-2. 在线数据增强: 训练时对每张图片实时施加随机变换 (旋转±10°、平移±10%、缩放0.9~1.1、
-   随机裁剪), 验证和测试时不做增强。
-   作用: 等效于将训练集扩大了数十倍, 迫使模型学到真正鲁棒的特征, 而不是记住训练样本。
-   好处: 显著降低过拟合风险, 尤其在训练轮数较多时效果明显。
+2. Online Data Augmentation: During training, random transformations are applied to each image in
+   real-time (rotation +/-10 degrees, translation +/-10%, scaling 0.9~1.1, random cropping).
+   No augmentation is applied during validation and testing.
+   Purpose: Equivalent to expanding the training set by tens of times, forcing the model to learn
+   truly robust features rather than memorizing training samples.
+   Benefit: Significantly reduces overfitting risk, especially noticeable with more training epochs.
 
-3. 双通道对比实验设计: CNN 直接吃预处理后的 28×28 图像 (端到端自动学特征),
-   而基线模型 (KNN/LR/RF) 吃组员手工提取的 HOG+LBP+Shape 405 维特征。
-   这形成了一个有说服力的对照: 深度学习的自动特征学习 vs 传统手工特征工程,
-   能够直观展示两种范式的性能差异。
+3. Dual-Channel Comparative Experiment Design: CNN directly takes preprocessed 28x28 images
+   (end-to-end automatic feature learning), while baseline models (KNN/LR/RF) take hand-crafted
+   HOG+LBP+Shape 405-dimensional features extracted by team members.
+   This forms a persuasive comparison: deep learning's automatic feature learning vs. traditional
+   hand-crafted feature engineering, intuitively demonstrating the performance difference between
+   the two paradigms.
 """
 
 import torch
@@ -40,349 +53,369 @@ import torch.nn.functional as F
 
 
 # ============================================================
-# Focal Loss: 替代 CrossEntropyLoss 的改进损失函数
+# Focal Loss: Improved loss function to replace CrossEntropyLoss
 # ============================================================
 
 class FocalLoss(nn.Module):
     """
-    Focal Loss + Label Smoothing (聚焦损失函数 + 标签平滑)
+    Focal Loss + Label Smoothing
 
-    一句话概括: 让模型把注意力集中在"分错的样本"上, 同时防止模型过度自信。
+    Summary: Focus the model's attention on "hard-to-classify samples" while preventing
+    the model from becoming overconfident.
 
-    --- Focal Loss 部分 ---
+    --- Focal Loss Part ---
 
-    标准 CrossEntropyLoss 的问题:
-        假设训练集里有 42000 张图, 其中 38000 张都很简单 (比如很清晰的 0 和 1),
-        只有 4000 张比较难 (比如容易混淆的 7 和 9)。标准 CE 会对所有样本一视同仁,
-        结果训练信号被大量简单样本稀释了, 模型没动力去学那些难样本。
+    Problem with standard CrossEntropyLoss:
+        Suppose the training set has 42,000 images, of which 38,000 are easy (e.g., very clear
+        0s and 1s), and only 4,000 are hard (e.g., easily confused 7s and 9s). Standard CE treats
+        all samples equally, so the training signal gets diluted by the large number of easy
+        samples, and the model has little incentive to learn the hard ones.
 
-    Focal Loss 的解决方式:
-        给每个样本的 loss 乘一个权重: (1 - p_t)^gamma
-        - p_t 是模型对这个样本的预测概率 (越接近 1 越简单)
-        - gamma 是聚焦参数 (我们设为 2.0)
+    Focal Loss solution:
+        Multiply each sample's loss by a weight: (1 - p_t)^gamma
+        - p_t is the model's predicted probability for that sample (closer to 1 = easier)
+        - gamma is the focusing parameter (we set it to 2.0)
 
-        效果:
-        - 简单样本 (p_t ≈ 0.99): 权重 = (1-0.99)^2 = 0.0001, loss 几乎被忽略
-        - 难样本   (p_t ≈ 0.3):  权重 = (1-0.3)^2  = 0.49,   loss 保留将近一半
+        Effect:
+        - Easy sample (p_t ~ 0.99): weight = (1-0.99)^2 = 0.0001, loss is nearly ignored
+        - Hard sample (p_t ~ 0.3):  weight = (1-0.3)^2  = 0.49,   loss is retained at nearly half
 
-        这样模型就会自动把精力花在难分样本上 (比如 7/9 混淆)。
+        This way the model automatically focuses on the hard samples (e.g., 7/9 confusion).
 
-    --- Label Smoothing 部分 ---
+    --- Label Smoothing Part ---
 
-    标准训练用 one-hot 标签: [0, 0, 1, 0, 0, ...]  (第 2 类是 100%)
-    Label Smoothing 改成:    [ε/(C-1), ε/(C-1), 1-ε, ε/(C-1), ...]
-                             其中 ε=0.1, C=10
+    Standard training uses one-hot labels: [0, 0, 1, 0, 0, ...]  (class 2 is 100%)
+    Label Smoothing changes it to:        [eps/(C-1), eps/(C-1), 1-eps, eps/(C-1), ...]
+                                           where eps=0.1, C=10
 
-    为什么要这样:
-        - one-hot 鼓励模型输出极端概率 (100% 确信), 容易过拟合
-        - label smoothing 强制模型"留有余地", 对正确类最多输出 91.1%
-        - 这让决策边界更平滑, 泛化能力更好
+    Why do this:
+        - One-hot encourages the model to output extreme probabilities (100% certainty), prone to
+          overfitting
+        - Label smoothing forces the model to "leave room", outputting at most 91.1% for the
+          correct class
+        - This makes the decision boundary smoother and improves generalization
 
-    --- 为什么两个一起用 ---
+    --- Why Use Both Together ---
 
-        Focal Loss 管"看哪些样本" (关注难样本)
-        Label Smoothing 管"别太自信" (平滑决策边界)
-        两者正交, 组合效果叠加。
+        Focal Loss handles "which samples to focus on" (focus on hard samples)
+        Label Smoothing handles "don't be too confident" (smooth decision boundary)
+        The two are orthogonal, and their effects stack when combined.
 
-    参数说明:
-        gamma:           聚焦参数, 越大越关注难样本。推荐 2.0, 原论文实验值
-        alpha:           类别权重, 用于处理类别不平衡。我们数据均衡, 设为 None
-        label_smoothing: 平滑系数, 0.1 是常用值。0.0 = 等同不用 smoothing
-        num_classes:     类别数, MNIST 是 10
+    Parameters:
+        gamma:           Focusing parameter; larger values focus more on hard samples.
+                         Recommended 2.0, the experimental value from the original paper
+        alpha:           Class weight, used to handle class imbalance. Our data is balanced, set
+                         to None
+        label_smoothing: Smoothing coefficient; 0.1 is a common value. 0.0 = no smoothing
+        num_classes:     Number of classes; 10 for MNIST
     """
 
     def __init__(self, gamma=2.0, alpha=None, label_smoothing=0.1, num_classes=10):
         super().__init__()
-        self.gamma = gamma                # 聚焦参数: 控制简单样本被降权的程度
-        self.alpha = alpha                # 类别权重: 处理类别不平衡, None 表示不使用
-        self.label_smoothing = label_smoothing  # 标签平滑系数
-        self.num_classes = num_classes    # 分类数 (MNIST = 10)
+        self.gamma = gamma                # Focusing parameter: controls how much easy samples are down-weighted
+        self.alpha = alpha                # Class weight: handles class imbalance, None means not used
+        self.label_smoothing = label_smoothing  # Label smoothing coefficient
+        self.num_classes = num_classes    # Number of classes (MNIST = 10)
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
-        计算一个 batch 的 Focal Loss
+        Compute Focal Loss for a batch
 
-        参数:
-            inputs:  模型的原始输出 (logits), shape=(batch_size, num_classes)
-                     注意: 不需要先过 Softmax, 函数内部会自己算
-            targets: 真实标签, shape=(batch_size,), 值为 0-9 的整数
+        Parameters:
+            inputs:  Model's raw outputs (logits), shape=(batch_size, num_classes)
+                     Note: No need to apply Softmax first; the function computes it internally
+            targets: Ground truth labels, shape=(batch_size,), integer values 0-9
 
-        返回:
-            一个标量 loss 值, 越小越好
+        Returns:
+            A scalar loss value; the smaller the better
 
-        计算过程 (逐步解释):
-            1. 构造平滑标签: 把 one-hot [0,0,1,0,...] 变成 [0.011, 0.011, 0.911, 0.011, ...]
-            2. 计算对数概率: log_softmax = log(softmax(logits))
-            3. 计算概率: softmax(logits)
-            4. 计算 focal 权重: (1 - prob)^gamma, 简单样本权重小, 难样本权重大
-            5. 加权求和: -focal_weight × smooth_label × log_prob
+        Computation steps (explained step by step):
+            1. Construct smoothed labels: convert one-hot [0,0,1,0,...] to [0.011, 0.011, 0.911, ...]
+            2. Compute log probabilities: log_softmax = log(softmax(logits))
+            3. Compute probabilities: softmax(logits)
+            4. Compute focal weight: (1 - prob)^gamma, small weight for easy samples, large for hard
+            5. Weighted sum: -focal_weight * smooth_label * log_prob
         """
-        # 第 1 步: 构造平滑标签
-        # 初始全填 ε/(C-1) = 0.1/9 ≈ 0.011
+        # Step 1: Construct smoothed labels
+        # Initially fill all with eps/(C-1) = 0.1/9 ~ 0.011
         smooth_labels = torch.zeros_like(inputs)
         smooth_labels.fill_(self.label_smoothing / (self.num_classes - 1))
-        # 真实类位置填 1-ε = 0.9
-        # scatter_ 的意思: 在第 1 维上, 把 targets 指定的位置填入 0.9
+        # Fill the true class position with 1-eps = 0.9
+        # scatter_ means: along dimension 1, fill the positions specified by targets with 0.9
         smooth_labels.scatter_(1, targets.unsqueeze(1), 1.0 - self.label_smoothing)
-        # 结果: 如果真实标签是 3, 则 smooth_labels = [0.011, 0.011, 0.011, 0.9, 0.011, ...]
+        # Result: if true label is 3, then smooth_labels = [0.011, 0.011, 0.011, 0.9, 0.011, ...]
 
-        # 第 2 步: 计算对数概率和概率
-        # log_softmax 比 softmax + log 数值更稳定 (避免 log(接近0的数))
+        # Step 2: Compute log probabilities and probabilities
+        # log_softmax is more numerically stable than softmax + log (avoids log(near-zero))
         log_probs = F.log_softmax(inputs, dim=-1)  # shape: (batch, 10)
-        probs = torch.exp(log_probs)                 # 等价于 softmax(inputs), shape: (batch, 10)
+        probs = torch.exp(log_probs)                 # equivalent to softmax(inputs), shape: (batch, 10)
 
-        # 第 3 步: 计算 focal 权重
-        # (1 - p)^gamma: 模型越确信的样本 (p 接近 1), 权重越小
+        # Step 3: Compute focal weight
+        # (1 - p)^gamma: the more confident the model is (p close to 1), the smaller the weight
         focal_weight = (1 - probs) ** self.gamma     # shape: (batch, 10)
 
-        # 第 4 步: 加权 loss
-        # -focal_weight × smooth_label × log_prob
+        # Step 4: Weighted loss
+        # -focal_weight * smooth_label * log_prob
         loss = -focal_weight * smooth_labels * log_probs  # shape: (batch, 10)
 
-        # 第 5 步: 如果有类别权重, 额外乘上去 (我们没用到, alpha=None)
+        # Step 5: If class weights exist, multiply them in (we don't use this, alpha=None)
         if self.alpha is not None:
             alpha_weight = smooth_labels * self.alpha
             loss = loss * alpha_weight
 
-        # 最后: 对每个样本的 10 个类别求和, 再对所有样本求平均
+        # Finally: sum across 10 classes for each sample, then average across all samples
         return loss.sum(dim=-1).mean()
 
 
 # ============================================================
-# CNN 模型: 用于 MNIST 手写数字识别的卷积神经网络
+# CNN Model: Convolutional Neural Network for MNIST handwritten digit recognition
 # ============================================================
 
 class MNISTCNN(nn.Module):
     """
-    MNIST 手写数字识别 CNN
+    MNIST Handwritten Digit Recognition CNN
 
-    整体结构 (从输入到输出):
-    ┌──────────────────────────────────────────────────────────────────┐
-    │ 输入: (batch, 1, 28, 28) — 灰度图, 1 个通道, 28×28 像素         │
-    ├──────────────────────────────────────────────────────────────────┤
-    │ 第 1 层卷积块:                                                    │
-    │   Conv2d(1→32, 3×3)  — 32 个卷积核扫描图像, 提取笔画边缘等低级特征  │
-    │   BatchNorm2d(32)    — 归一化, 稳定训练                           │
-    │   ReLU               — 激活函数, 引入非线性                        │
-    │   MaxPool2d(2×2)     — 池化, 保留最显著特征, 尺寸减半              │
-    │   输出: (batch, 32, 14, 14)                                       │
-    ├──────────────────────────────────────────────────────────────────┤
-    │ 第 2 层卷积块:                                                    │
-    │   Conv2d(32→64, 3×3) — 64 个卷积核, 组合低级特征成中级模式         │
-    │   BatchNorm2d(64)    — 归一化                                      │
-    │   ReLU               — 激活函数                                    │
-    │   MaxPool2d(2×2)     — 尺寸再减半                                  │
-    │   输出: (batch, 64, 7, 7)                                         │
-    ├──────────────────────────────────────────────────────────────────┤
-    │ Dropout(0.25): 卷积层和全连接层之间的正则化                         │
-    ├──────────────────────────────────────────────────────────────────┤
-    │ 分类器 (全连接层):                                                 │
-    │   Flatten            — 展平成一维向量: 64×7×7 = 3136               │
-    │   Linear(3136→128)   — 全连接, 整合所有特征                        │
-    │   ReLU               — 激活函数                                    │
-    │   Dropout(0.5)       — 随机丢弃 50% 神经元, 防止过拟合             │
-    │   Linear(128→10)     — 输出 10 个数字的得分                        │
-    │   输出: (batch, 10)                                               │
-    └──────────────────────────────────────────────────────────────────┘
+    Overall architecture (from input to output):
+    +------------------------------------------------------------------+
+    | Input: (batch, 1, 28, 28) -- grayscale image, 1 channel, 28x28   |
+    +------------------------------------------------------------------+
+    | Layer 1 Convolutional Block:                                      |
+    |   Conv2d(1->32, 3x3)  -- 32 kernels scan the image, extract       |
+    |                           low-level features like stroke edges     |
+    |   BatchNorm2d(32)    -- normalization, stabilize training          |
+    |   ReLU               -- activation function, introduce nonlinearity|
+    |   MaxPool2d(2x2)     -- pooling, keep most prominent features,     |
+    |                          halve spatial dimensions                  |
+    |   Output: (batch, 32, 14, 14)                                     |
+    +------------------------------------------------------------------+
+    | Layer 2 Convolutional Block:                                      |
+    |   Conv2d(32->64, 3x3) -- 64 kernels, combine low-level features   |
+    |                           into mid-level patterns                  |
+    |   BatchNorm2d(64)    -- normalization                              |
+    |   ReLU               -- activation function                        |
+    |   MaxPool2d(2x2)     -- halve spatial dimensions again             |
+    |   Output: (batch, 64, 7, 7)                                       |
+    +------------------------------------------------------------------+
+    | Dropout(0.25): Regularization between conv and fully-connected     |
+    +------------------------------------------------------------------+
+    | Classifier (Fully Connected Layers):                               |
+    |   Flatten            -- flatten to 1D vector: 64x7x7 = 3136       |
+    |   Linear(3136->128)  -- fully connected, integrate all features    |
+    |   ReLU               -- activation function                        |
+    |   Dropout(0.5)       -- randomly drop 50% neurons, prevent         |
+    |                          overfitting                               |
+    |   Linear(128->10)    -- output scores for 10 digits                |
+    |   Output: (batch, 10)                                             |
+    +------------------------------------------------------------------+
 
-    总参数量: 421,834
+    Total parameters: 421,834
 
-    改进点:
-        - Kaiming 初始化: 专为 ReLU 设计的权重初始化, 稳定训练初期的梯度传播
-        - BatchNorm: 每层卷积后归一化, 加速收敛 + 提升准确率
-        - Dropout(0.25): 卷积→全连接之间额外正则化, 减少共适应
-        - Dropout(0.5): 全连接层随机丢弃 50% 神经元, 防止过拟合
-        - 配合 train.py 中的在线数据增强, 进一步提升泛化能力
+    Improvements:
+        - Kaiming initialization: Weight initialization designed for ReLU, stabilizes gradient
+          propagation in early training
+        - BatchNorm: Normalization after each conv layer, accelerates convergence + improves accuracy
+        - Dropout(0.25): Extra regularization between conv and fully-connected layers, reduces
+          co-adaptation
+        - Dropout(0.5): Randomly drops 50% neurons in fully-connected layer, prevents overfitting
+        - Combined with online data augmentation in train.py, further improves generalization
 
-    注意: 最后一层输出的是 raw logits (没过 Softmax),
-          因为 FocalLoss 内部会自己算 Softmax。
+    Note: The last layer outputs raw logits (no Softmax applied),
+          because FocalLoss computes Softmax internally.
     """
 
     def __init__(self, num_classes: int = 10):
         """
-        初始化网络
+        Initialize the network
 
-        参数:
-            num_classes: 分类数, MNIST 是 10 个数字 (0-9)
+        Parameters:
+            num_classes: Number of classes; MNIST has 10 digits (0-9)
         """
         super().__init__()
 
-        # ---- 特征提取部分 (卷积层) ----
-        # 这部分负责从图像中提取有意义的特征
+        # ---- Feature extraction part (convolutional layers) ----
+        # This part is responsible for extracting meaningful features from images
         self.features = nn.Sequential(
-            # ===== 第 1 层卷积块 =====
-            # Conv2d: 1 个输入通道 (灰度图) → 32 个输出通道 (32 种不同的特征)
-            # kernel_size=3: 3×3 的卷积核, 足够捕获笔画方向
-            # padding=1: 边缘补零, 保持输出尺寸不变
+            # ===== Layer 1 Convolutional Block =====
+            # Conv2d: 1 input channel (grayscale) -> 32 output channels (32 different features)
+            # kernel_size=3: 3x3 convolution kernel, sufficient to capture stroke directions
+            # padding=1: zero-padding on edges, keep output spatial dimensions unchanged
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
 
-            # BatchNorm: 对 32 个通道各自归一化到均值≈0、方差≈1
-            # 好处: 训练更稳定, 可以用更大的学习率, 收敛更快
+            # BatchNorm: Normalize each of the 32 channels to mean~0, variance~1
+            # Benefit: More stable training, can use larger learning rate, faster convergence
             nn.BatchNorm2d(32),
 
-            # ReLU: 把负数变成 0, 正数不变
-            # 好处: 引入非线性 (没有它, 多层线性变换等价于一层)
-            #       同时计算简单, 缓解梯度消失
+            # ReLU: Turn negative values to 0, keep positive values unchanged
+            # Benefit: Introduces nonlinearity (without it, multiple linear transforms equal one)
+            #          Also simple to compute, mitigates gradient vanishing
             nn.ReLU(),
 
-            # MaxPool: 在每个 2×2 区域取最大值
-            # 效果: 28×28 → 14×14 (尺寸减半), 保留最显著的特征
-            #       同时提供一定的平移不变性
+            # MaxPool: Take the maximum value in each 2x2 region
+            # Effect: 28x28 -> 14x14 (halve spatial dimensions), keep most prominent features
+            #         Also provides some translation invariance
             nn.MaxPool2d(2, 2),
 
-            # ===== 第 2 层卷积块 =====
-            # Conv2d: 32 个输入通道 → 64 个输出通道
-            # 第 2 层能学到的特征比第 1 层更高级: 第 1 层学边缘,
-            # 第 2 层把边缘组合成笔画、弧线、交叉点等
+            # ===== Layer 2 Convolutional Block =====
+            # Conv2d: 32 input channels -> 64 output channels
+            # Layer 2 learns higher-level features than Layer 1: Layer 1 learns edges,
+            # Layer 2 combines edges into strokes, arcs, intersection points, etc.
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),  # 14×14 → 7×7
+            nn.MaxPool2d(2, 2),  # 14x14 -> 7x7
         )
-        # 经过两层卷积后: (batch, 64, 7, 7) = 每张图变成 64 个 7×7 的特征图
+        # After two convolutional layers: (batch, 64, 7, 7) = each image becomes 64 7x7 feature maps
 
-        # ---- 卷积层和全连接层之间的 Dropout ----
-        # 参考改进: 在卷积层输出展平后、进入全连接层之前加 Dropout(0.25)
-        # 作用: 减少卷积特征到全连接层的共适应, 进一步防止过拟合
-        # 为什么用 0.25 (比全连接层的 0.5 小): 卷积层特征已经经过池化降维,
-        # 信息密度较高, 丢弃太多会损失有用特征
+        # ---- Dropout between convolutional and fully-connected layers ----
+        # Improvement: Add Dropout(0.25) after conv output is flattened, before entering FC layers
+        # Purpose: Reduce co-adaptation between conv features and FC layers, further prevent overfitting
+        # Why 0.25 (smaller than FC layer's 0.5): Conv features have already been dimensionally
+        # reduced by pooling, information density is higher; dropping too much would lose useful features
         self.dropout_conv = nn.Dropout(0.25)
 
-        # ---- 分类器部分 (全连接层) ----
-        # 这部分负责把提取到的特征映射到 10 个类别
+        # ---- Classifier part (fully-connected layers) ----
+        # This part maps extracted features to 10 classes
         self.classifier = nn.Sequential(
-            # Flatten: 把 (64, 7, 7) 展平成 (3136,) 的一维向量
+            # Flatten: Flatten (64, 7, 7) into a 1D vector of (3136,)
             nn.Flatten(),
 
-            # 全连接层: 3136 维 → 128 维
-            # 128 维是一个"瓶颈", 把 3136 维的信息压缩成更紧凑的表示
+            # Fully connected layer: 3136 dims -> 128 dims
+            # 128 dims is a "bottleneck", compressing 3136-dim information into a more compact
+            # representation
             nn.Linear(64 * 7 * 7, 128),
             nn.ReLU(),
 
-            # Dropout: 训练时随机丢弃 50% 的神经元
-            # 作用: 防止模型过度依赖某几个神经元, 强制它学习冗余特征
-            # 注意: 只在训练时生效, 预测时自动关闭 (PyTorch 的 Dropout 自带这个逻辑)
+            # Dropout: Randomly drop 50% of neurons during training
+            # Purpose: Prevent the model from relying too heavily on a few neurons, force it to
+            #          learn redundant features
+            # Note: Only active during training; automatically disabled during inference
+            #       (PyTorch's Dropout has this logic built in)
             nn.Dropout(0.5),
 
-            # 输出层: 128 维 → 10 维
-            # 输出 10 个数字各自的"得分" (logits), 得分最高的就是预测结果
+            # Output layer: 128 dims -> 10 dims
+            # Outputs "scores" (logits) for each of the 10 digits; the highest score is the prediction
             nn.Linear(128, num_classes),
         )
 
-        # ---- Kaiming 权重初始化 ----
-        # 好的初始化让训练从第一轮就稳定, 避免梯度消失/爆炸
+        # ---- Kaiming weight initialization ----
+        # Good initialization makes training stable from the first epoch, avoiding gradient
+        # vanishing/explosion
         self._initialize_weights()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        前向传播: 从输入图像 → 输出 10 个类别的得分
+        Forward pass: from input image -> output scores for 10 classes
 
-        参数:
-            x: 输入图像, shape=(batch_size, 1, 28, 28)
-               batch_size = 一次处理多少张图
-               1 = 灰度图 (1 个通道)
-               28×28 = 图像尺寸
+        Parameters:
+            x: Input image, shape=(batch_size, 1, 28, 28)
+               batch_size = number of images processed at once
+               1 = grayscale image (1 channel)
+               28x28 = image dimensions
 
-        返回:
-            shape=(batch_size, 10) — 每张图对应 10 个数字的得分
+        Returns:
+            shape=(batch_size, 10) -- scores for 10 digits per image
 
-        流程:
-            输入 (batch, 1, 28, 28)
-            → features 卷积块 → (batch, 64, 7, 7)
-            → classifier 分类器 → (batch, 10)
+        Flow:
+            Input (batch, 1, 28, 28)
+            -> features convolutional blocks -> (batch, 64, 7, 7)
+            -> classifier -> (batch, 10)
         """
-        # 先过卷积层提取特征
+        # First pass through convolutional layers to extract features
         x = self.features(x)
-        # 卷积层和全连接层之间的 Dropout(0.25), 防止过拟合
+        # Dropout(0.25) between conv and FC layers, prevent overfitting
         x = self.dropout_conv(x)
-        # 再过全连接层做分类
+        # Then pass through fully-connected layers for classification
         x = self.classifier(x)
         return x
 
 
     def _initialize_weights(self):
         """
-        Kaiming 权重初始化 (He 初始化)
+        Kaiming Weight Initialization (He Initialization)
 
-        为什么需要初始化:
-            如果权重全为 0 或随机得很小/很大, 训练初期梯度会消失或爆炸,
-            导致模型根本学不到东西。好的初始化能让训练从第一轮开始就稳定。
+        Why initialization is needed:
+            If weights are all zeros or randomly too small/large, early training gradients will
+            vanish or explode, making the model unable to learn anything. Good initialization
+            keeps training stable from the first epoch.
 
-        Kaiming 初始化 (He 初始化):
-            专为 ReLU 激活函数设计的初始化方法。
-            核心思想: 让每一层的输出方差保持稳定, 不随层数增加而消失或爆炸。
+        Kaiming Initialization (He Initialization):
+            An initialization method designed specifically for ReLU activation functions.
+            Core idea: Keep the output variance of each layer stable, so it doesn't vanish
+            or explode as depth increases.
 
             - Conv2d: kaiming_normal_ (mode='fan_out', nonlinearity='relu')
-              fan_out 模式根据输出通道数计算方差, 适合 Conv2d
-            - BatchNorm2d: weight 初始化为 1, bias 初始化为 0
-              (标准做法, BN 层自己会通过运行统计量调整)
+              fan_out mode computes variance based on output channels, suitable for Conv2d
+            - BatchNorm2d: weight initialized to 1, bias initialized to 0
+              (standard practice; BN layer adjusts itself via running statistics)
             - Linear: normal_(mean=0, std=0.01)
-              全连接层用较小的正态分布初始化, 避免初始输出过大
+              Fully-connected layers use small-variance normal distribution to avoid large initial
+              outputs
 
-        参考: He et al. "Delving Deep into Rectifiers: Surpassing Human-Level
-              Performance on ImageNet Classification" (2015)
+        Reference: He et al. "Delving Deep into Rectifiers: Surpassing Human-Level
+                   Performance on ImageNet Classification" (2015)
         """
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                # Kaiming 正态分布初始化, 专为 ReLU 设计
+                # Kaiming normal distribution initialization, designed for ReLU
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
-                # BN: weight=1, bias=0, 让初始状态不改变输入分布
+                # BN: weight=1, bias=0, so the initial state does not change the input distribution
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
-                # 全连接层: 小方差正态分布, 避免初始输出过大
+                # Fully-connected layer: small-variance normal distribution, avoid large initial outputs
                 nn.init.normal_(m.weight, 0, 0.01)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
     def get_feature_maps(self, x: torch.Tensor) -> tuple:
         """
-        提取中间层特征图 (用于可视化卷积核学到了什么)
+        Extract intermediate layer feature maps (for visualizing what convolutional kernels learned)
 
-        用途:
-            - 可视化第 1 层卷积核学到的边缘/笔画检测器
-            - 可视化第 2 层卷积核学到的更高层模式 (弧线、交叉点等)
-            - 帮助理解 CNN 内部的工作原理, 不是"黑盒"
+        Use cases:
+            - Visualize edge/stroke detectors learned by Layer 1 convolutional kernels
+            - Visualize higher-level patterns (arcs, intersections, etc.) learned by Layer 2
+            - Help understand how CNN works internally, not a "black box"
 
-        参数:
-            x: 输入图像, shape=(1, 1, 28, 28) 或 (batch, 1, 28, 28)
+        Parameters:
+            x: Input image, shape=(1, 1, 28, 28) or (batch, 1, 28, 28)
 
-        返回:
-            (conv1_features, conv2_features) 元组:
-            - conv1_features: 第 1 层卷积块输出, shape=(batch, 32, 14, 14)
-              32 个特征图, 每个捕捉一种低级模式 (如水平笔画、垂直边缘)
-            - conv2_features: 第 2 层卷积块输出, shape=(batch, 64, 7, 7)
-              64 个特征图, 组合低级模式成更复杂的结构
+        Returns:
+            (conv1_features, conv2_features) tuple:
+            - conv1_features: Layer 1 conv block output, shape=(batch, 32, 14, 14)
+              32 feature maps, each capturing a low-level pattern (e.g., horizontal strokes,
+              vertical edges)
+            - conv2_features: Layer 2 conv block output, shape=(batch, 64, 7, 7)
+              64 feature maps, combining low-level patterns into more complex structures
         """
-        # features 的前 4 层 = 第 1 个卷积块: Conv→BN→ReLU→Pool
-        # 输入 (1, 28, 28) → 输出 (32, 14, 14)
+        # First 4 layers of features = 1st conv block: Conv->BN->ReLU->Pool
+        # Input (1, 28, 28) -> Output (32, 14, 14)
         conv1_features = self.features[:4](x)
-        # features 的后 4 层 = 第 2 个卷积块: Conv→BN→ReLU→Pool
-        # 输入 (32, 14, 14) → 输出 (64, 7, 7)
+        # Last 4 layers of features = 2nd conv block: Conv->BN->ReLU->Pool
+        # Input (32, 14, 14) -> Output (64, 7, 7)
         conv2_features = self.features[4:](conv1_features)
         return conv1_features, conv2_features
 
 
 # ============================================================
-# 工具函数
+# Utility Functions
 # ============================================================
 
 def count_parameters(model: nn.Module) -> int:
     """
-    统计模型的可训练参数数量
+    Count the number of trainable parameters in a model
 
-    用途: 了解模型规模, 方便对比不同模型的大小
-    例: MNISTCNN 有 421,834 个参数
+    Purpose: Understand model size, convenient for comparing different models
+    Example: MNISTCNN has 421,834 parameters
 
-    参数:
-        model: PyTorch 模型
+    Parameters:
+        model: PyTorch model
 
-    返回:
-        int: 可训练参数的总数
+    Returns:
+        int: Total number of trainable parameters
     """
-    # p.numel() = 这个张量有几个元素 (参数量)
-    # p.requires_grad = True 表示这个参数会被梯度更新 (可训练)
+    # p.numel() = number of elements in this tensor (parameter count)
+    # p.requires_grad = True means this parameter will be updated by gradients (trainable)
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

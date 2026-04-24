@@ -69,7 +69,7 @@ def main():
 
     print(f"  Raw data: Train set {X_train_raw.shape}, Test set {X_test_raw.shape}")
 
-    # 应用预处理流水线
+    # Apply preprocessing pipeline
     preprocessor = Preprocessor()
     X_train_raw = preprocessor.preprocess_pipeline(X_train_raw)
     X_test_raw = preprocessor.preprocess_pipeline(X_test_raw)
@@ -138,7 +138,7 @@ def main():
     print(f"  Validation features: {X_val_features.shape}")
     print(f"  Test features: {X_test_features.shape}")
 
-    # 保存特征提取器
+    # Save feature extractor
     features_dir = "data/features"
     Path(features_dir).mkdir(parents=True, exist_ok=True)
     extractor.save(Path(features_dir) / "feature_extractor.pkl")
@@ -155,7 +155,7 @@ def main():
             batch_size=args.batch_size, epochs=args.epochs, lr=args.lr, seed=args.seed,
         )
 
-        # ==================== 5. 保存结果 ====================
+        # ==================== 5. Save results ====================
         print("\n[Stage 5] Saving results...")
 
         try:

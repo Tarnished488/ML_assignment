@@ -16,7 +16,7 @@ from typing import Dict, Optional, Any
 import warnings
 warnings.filterwarnings('ignore')
 
-# 尝试导入scipy用于统计检验
+# Try to import scipy for statistical tests
 try:
     from scipy import stats
     HAS_SCIPY = True
@@ -44,20 +44,20 @@ class MNISTExplorer:
         self.X_test = X_test
         self.y_test = y_test
 
-        # 基本统计信息
+        # Basic statistics
         self.n_train = len(X_train)
         self.n_test = len(X_test)
         self.image_shape = X_train[0].shape
 
-        # 缓存计算结果
+        # Cache computation results
         self._stats_cache = {}
 
-        # 设置可视化风格
+        # Set visualization style
         plt.style.use('seaborn-v0_8-darkgrid')
         sns.set_palette("husl")
 
     def get_basic_stats(self) -> Dict[str, Any]:
-        """获取数据集基本统计信息"""
+        """Get basic statistics of the dataset"""
         if 'basic_stats' in self._stats_cache:
             return self._stats_cache['basic_stats']
 
@@ -89,7 +89,7 @@ class MNISTExplorer:
         return stats
 
     def print_summary(self):
-        """打印数据集概览"""
+        """Print dataset overview"""
         stats = self.get_basic_stats()
 
         print("=" * 60)
@@ -134,7 +134,7 @@ class MNISTExplorer:
         axes[0].set_xticks(range(10))
         axes[0].grid(True, alpha=0.3)
 
-        # 添加数量标签
+        # Add count labels
         for i, count in enumerate(stats['train_label_dist']):
             axes[0].text(i, count + 50, f'{count:,}', ha='center', fontsize=9)
 
@@ -146,7 +146,7 @@ class MNISTExplorer:
         axes[1].set_xticks(range(10))
         axes[1].grid(True, alpha=0.3)
 
-        # 添加数量标签
+        # Add count labels
         for i, count in enumerate(stats['test_label_dist']):
             axes[1].text(i, count + 20, f'{count:,}', ha='center', fontsize=9)
 
@@ -374,7 +374,7 @@ class MNISTExplorer:
 
     def analyze_pixel_intensity(self, save_path: Optional[str] = None):
         """Analyze pixel intensity distribution"""
-        # 将图像展平
+        # Flatten images
         train_pixels = self.X_train.reshape(-1)
         test_pixels = self.X_test.reshape(-1)
 
@@ -414,7 +414,7 @@ class MNISTExplorer:
         print(f"Training Set: Mean={train_pixels.mean():.4f}, Std={train_pixels.std():.4f}")
         print(f"Test Set: Mean={test_pixels.mean():.4f}, Std={test_pixels.std():.4f}")
 
-        # 执行统计检验（如果有scipy）
+        # Perform statistical tests (if scipy is available)
         if HAS_SCIPY:
             _, p_value = stats.ks_2samp(train_pixels[::100], test_pixels[::100])
             print(f"\nKolmogorov-Smirnov Test: p-value={p_value:.6f}")
@@ -604,7 +604,7 @@ class MNISTExplorer:
         print("\nExploratory Data Analysis Complete!")
 
 
-# 便捷函数
+# Convenience function
 def load_and_analyze(data_dir: str = "data/processed", output_dir: Optional[str] = None):
     """
     Convenience function to load data and run EDA analysis
@@ -621,32 +621,32 @@ def load_and_analyze(data_dir: str = "data/processed", output_dir: Optional[str]
     print("Initializing EDA explorer...")
     explorer = MNISTExplorer(X_train, y_train, X_test, y_test)
 
-    # 运行全面分析
+    # Run comprehensive analysis
     explorer.run_comprehensive_analysis(output_dir)
 
     return explorer
 
 
 if __name__ == "__main__":
-    # 测试代码
+    # Test code
     from src.data.loader import load_mnist
 
     print("=" * 60)
-    print("MNISTExplorer 测试代码")
+    print("MNISTExplorer Test Code")
     print("=" * 60)
 
-    print("\n加载MNIST数据...")
+    print("\nLoading MNIST data...")
     try:
         X_train, y_train, X_test, y_test = load_mnist(
             preprocess=True
         )
     except Exception as e:
-        print(f"数据加载失败: {e}")
-        print("测试终止。")
+        print(f"Data loading failed: {e}")
+        print("Test aborted.")
         exit(1)
 
-    print("初始化EDA探索器...")
+    print("Initializing EDA explorer...")
     explorer = MNISTExplorer(X_train, y_train, X_test, y_test)
 
-    # 运行四个EDA步骤
+    # Run four EDA steps
     explorer.run_comprehensive_analysis()

@@ -1,36 +1,36 @@
 """
-模型训练模块
+Model Training Module
 
-这个文件是整个训练流程的核心, 包含三个部分:
-1. CNN 训练流程 (PyTorch)
-2. 基线模型训练 (sklearn: KNN, Logistic Regression, Random Forest)
-3. 数据划分与加载
+This file is the core of the entire training pipeline, containing three parts:
+1. CNN training pipeline (PyTorch)
+2. Baseline model training (sklearn: KNN, Logistic Regression, Random Forest)
+3. Data splitting and loading
 
-=== 数据划分策略 ===
+=== Data Splitting Strategy ===
 
-训练集:验证集:测试集 = 6:2:2 (42000:14000:14000)
+Train:Val:Test = 6:2:2 (42000:14000:14000)
 
-为什么这样划分:
-- 训练集 (42000): 训练模型参数, 占大头, 数据越多模型学得越好
-- 验证集 (14000): 训练过程中监控是否过拟合, 用来决定什么时候停 (早停)
-- 测试集 (14000): 最终评估, 所有模型共用, 保证对比公平
+Why this split:
+- Training set (42000): Trains model parameters, the largest portion; more data leads to better learning
+- Validation set (14000): Monitors overfitting during training, determines when to stop (early stopping)
+- Test set (14000): Final evaluation, shared by all models to ensure fair comparison
 
-为什么不用原始的 60000+10000:
-- 原始 MNIST 没有验证集, 只有训练集(60000)和测试集(10000)
-- 我们需要验证集来做早停, 所以把全部 70000 张合并后重新划分
+Why not use the original 60000+10000:
+- The original MNIST has no validation set, only training (60000) and test (10000) sets
+- We need a validation set for early stopping, so we merge all 70000 images and re-split
 
-=== 训练策略 ===
+=== Training Strategy ===
 
-CNN 训练策略:
-- 优化器: Adam (自适应学习率, 收敛快, 适合 MNIST)
-- 损失函数: Focal Loss + Label Smoothing (关注难分样本, 防止过度自信)
-- 学习率调度: StepLR (每 10 个 epoch 衰减为原来的 0.1)
-- 早停: 验证集准确率连续 5 轮不提升则停止
-- 数据增强: 训练时随机旋转/平移/缩放, 防止过拟合
+CNN training strategy:
+- Optimizer: Adam (adaptive learning rate, fast convergence, suitable for MNIST)
+- Loss function: Focal Loss + Label Smoothing (focuses on hard samples, prevents overconfidence)
+- Learning rate schedule: StepLR (decay to 0.1x every 10 epochs)
+- Early stopping: Stop if validation accuracy does not improve for 5 consecutive epochs
+- Data augmentation: Random rotation/translation/scaling during training to prevent overfitting
 
-基线模型训练策略:
-- 使用 sklearn 的默认参数 (KNN k=5, LR 1000轮, RF 100棵树)
-- 使用组员提取的 HOG+LBP+Shape 405 维特征
+Baseline model training strategy:
+- Use sklearn default parameters (KNN k=5, LR 1000 iterations, RF 100 trees)
+- Use the HOG+LBP+Shape 405-dimensional features extracted by team members
 """
 
 import numpy as np
@@ -48,23 +48,24 @@ from src.models.evaluate import evaluate_model, print_evaluation, compare_models
 
 
 # ============================================================
-# 工具函数: 固定随机种子、选择设备、划分数据集
+# Utility functions: set random seed, select device, split dataset
 # ============================================================
 
 def set_seed(seed: int = 42):
     """
-    固定所有随机种子, 保证每次运行结果一样
+    Fix all random seeds to ensure reproducible results
 
-    为什么需要固定种子:
-        训练过程中有很多随机操作: 数据打乱顺序、Dropout 随机丢弃、权重随机初始化等。
-        不固定种子的话, 每次跑结果都不一样, 没法对比实验。
+    Why we need to fix seeds:
+        There are many random operations during training: data shuffling, Dropout,
+        weight initialization, etc. Without fixed seeds, results vary each run,
+        making it impossible to compare experiments.
 
-    覆盖的随机性来源:
-        - np.random.seed: NumPy 的随机操作 (数据打乱)
-        - torch.manual_seed: PyTorch CPU 上的随机操作
-        - torch.cuda.manual_seed_all: PyTorch GPU 上的随机操作
-        - cudnn.deterministic: cuDNN 卷积的确定性模式
-        - cudnn.benchmark: 关闭自动调优 (自动调优会引入随机性)
+    Sources of randomness covered:
+        - np.random.seed: NumPy random operations (data shuffling)
+        - torch.manual_seed: PyTorch CPU random operations
+        - torch.cuda.manual_seed_all: PyTorch GPU random operations
+        - cudnn.deterministic: cuDNN convolution deterministic mode
+        - cudnn.benchmark: Disable auto-tuning (auto-tuning introduces randomness)
     """
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -76,10 +77,10 @@ def set_seed(seed: int = 42):
 
 def get_device() -> torch.device:
     """
-    自动选择计算设备: 有 GPU 用 GPU, 没有 GPU 用 CPU
+    Automatically select the computing device: use GPU if available, otherwise CPU
 
-    GPU (CUDA) 训练速度比 CPU 快 5-10 倍, 但需要 NVIDIA 显卡。
-    这个函数会自动检测, 不需要手动改代码。
+    GPU (CUDA) training is 5-10x faster than CPU, but requires an NVIDIA GPU.
+    This function auto-detects the hardware, no manual code changes needed.
     """
     if torch.cuda.is_available():
         return torch.device("cuda")
@@ -88,85 +89,88 @@ def get_device() -> torch.device:
 
 def split_dataset(X_all, y_all, train_ratio=6/10, val_ratio=2/10, seed=42):
     """
-    将合并后的全部数据按比例划分成训练集、验证集、测试集
+    Split the merged dataset into train, validation, and test sets by ratio
 
-    默认比例: 训练集:验证集:测试集 = 6:2:2
-    70000 张 MNIST → 42000 + 14000 + 14000
+    Default ratio: Train:Val:Test = 6:2:2
+    70000 MNIST images -> 42000 + 14000 + 14000
 
-    参数:
-        X_all: 全部图像, shape=(70000, 28, 28)
-        y_all: 全部标签, shape=(70000,)
-        train_ratio: 训练集比例, 默认 6/10
-        val_ratio:   验证集比例, 默认 2/10
-        seed: 随机种子, 固定后划分结果可复现
+    Args:
+        X_all: All images, shape=(70000, 28, 28)
+        y_all: All labels, shape=(70000,)
+        train_ratio: Training set ratio, default 6/10
+        val_ratio:   Validation set ratio, default 2/10
+        seed: Random seed, fixing it makes the split reproducible
 
-    返回:
-        X_train, y_train, X_val, y_val, X_test, y_test (六个数组)
+    Returns:
+        X_train, y_train, X_val, y_val, X_test, y_test (six arrays)
 
-    划分逻辑:
-        1. 先把 70000 个样本的索引随机打乱
-        2. 前 20% 做测试集, 接下来 20% 做验证集, 剩下 60% 做训练集
-        3. 用索引从 X_all 和 y_all 中取出对应的数据
+    Splitting logic:
+        1. Randomly shuffle the indices of all 70000 samples
+        2. First 20% -> test set, next 20% -> validation set, remaining 60% -> training set
+        3. Use indices to extract corresponding data from X_all and y_all
     """
     set_seed(seed)
     n = len(X_all)
-    indices = np.random.permutation(n)  # 随机打乱 0~69999 的索引
+    indices = np.random.permutation(n)  # Randomly shuffle indices 0~69999
 
-    # 计算每个集合的大小
-    n_test = int(n * (1 - train_ratio - val_ratio))   # 70000 × 0.2 = 14000
-    n_val = int(n * val_ratio)                          # 70000 × 0.2 = 14000
+    # Calculate the size of each set
+    n_test = int(n * (1 - train_ratio - val_ratio))   # 70000 x 0.2 = 14000
+    n_val = int(n * val_ratio)                          # 70000 x 0.2 = 14000
 
-    # 按索引切分
-    test_idx = indices[:n_test]                         # 前 14000 个 → 测试集
-    val_idx = indices[n_test:n_test + n_val]            # 中间 14000 个 → 验证集
-    train_idx = indices[n_test + n_val:]                # 剩下 42000 个 → 训练集
+    # Split by indices
+    test_idx = indices[:n_test]                         # First 14000 -> test set
+    val_idx = indices[n_test:n_test + n_val]            # Middle 14000 -> validation set
+    train_idx = indices[n_test + n_val:]                # Remaining 42000 -> training set
 
     return (
-        X_all[train_idx], y_all[train_idx],   # 训练集
-        X_all[val_idx], y_all[val_idx],       # 验证集
-        X_all[test_idx], y_all[test_idx],     # 测试集
+        X_all[train_idx], y_all[train_idx],   # Training set
+        X_all[val_idx], y_all[val_idx],       # Validation set
+        X_all[test_idx], y_all[test_idx],     # Test set
     )
 
 
 # ============================================================
-# 数据增强: 训练时对图像做随机变换, 等效于扩大训练集
+# Data Augmentation: Apply random transforms to images during training,
+# effectively enlarging the training set
 # ============================================================
 
 class _AugmentedDataset(Dataset):
     """
-    带数据增强的 PyTorch 数据集
+    PyTorch Dataset with data augmentation
 
-    为什么需要数据增强:
-        训练集只有 42000 张图, 模型可能会"记住"这些图而不是学到真正的特征。
-        数据增强在每次取图时随机变换一下 (旋转、平移、缩放), 让模型每次看到不同的版本,
-        相当于把训练集扩大了几十倍。
+    Why data augmentation is needed:
+        With only 42000 training images, the model might "memorize" them instead of
+        learning real features. Data augmentation applies random transforms (rotation,
+        translation, scaling) each time an image is fetched, so the model sees a
+        different version each time, effectively multiplying the training set size.
 
-    关键点:
-        - 只有训练集做增强, 验证集和测试集不做 (保证评估公平)
-        - 增强是"在线"的, 即每次取图时实时变换, 不是预先生成一堆新图
-        - 每个 epoch 看到的都是不同的变形版本
+    Key points:
+        - Only the training set is augmented; validation and test sets are not (ensures fair evaluation)
+        - Augmentation is "online", i.e., transforms are applied on-the-fly, not pre-generated
+        - Each epoch sees different augmented versions of the images
     """
 
     def __init__(self, images: torch.Tensor, labels: torch.Tensor, augment: bool = False):
         """
-        参数:
-            images: 图像数据, shape=(N, 1, 28, 28)
-            labels: 标签数据, shape=(N,)
-            augment: 是否做数据增强 (训练集=True, 验证/测试集=False)
+        Args:
+            images: Image data, shape=(N, 1, 28, 28)
+            labels: Label data, shape=(N,)
+            augment: Whether to apply data augmentation (True for training set, False for val/test)
         """
         self.images = images
         self.labels = labels
         self.augment = augment
 
-        # 定义增强操作组合
+        # Define the augmentation pipeline
         self.aug_transform = transforms.Compose([
-            # 随机旋转 ±10°: 模拟不同人写字的倾斜角度
+            # Random rotation +/-10 degrees: simulate different writing tilt angles
             transforms.RandomRotation(10),
-            # 随机仿射变换: 同时做平移和缩放
-            # translate=(0.1, 0.1): 上下左右最多平移 10%
-            # scale=(0.9, 1.1): 缩放范围 90%~110%, 模拟字大字小
+            # Random affine transform: simultaneous translation and scaling
+            # translate=(0.1, 0.1): up/down/left/right translation up to 10%
+            # scale=(0.9, 1.1): scale range 90%~110%, simulating varying character sizes
             transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-            # 随机裁剪: 先在四周补 2 像素, 再随机裁回 28×28, 模拟微小位置偏移
+            # Random crop: pad 2 pixels on all sides, then randomly crop back to 28x28,
+            # simulating slight positional shifts
             transforms.RandomCrop(28, padding=2, padding_mode="edge"),
         ])
 
@@ -175,57 +179,58 @@ class _AugmentedDataset(Dataset):
 
     def __getitem__(self, idx):
         """
-        取第 idx 个样本
+        Get the idx-th sample
 
-        如果 augment=True, 会对图像做随机变换;
-        如果 augment=False, 直接返回原图。
+        If augment=True, applies random transforms to the image;
+        if augment=False, returns the original image directly.
         """
         img = self.images[idx]
         label = self.labels[idx]
         if self.augment:
-            img = self.aug_transform(img)  # 随机变换
+            img = self.aug_transform(img)  # Apply random transforms
         return img, label
 
 
 def prepare_cnn_data(X_train, y_train, X_val, y_val, X_test, y_test, batch_size=128):
     """
-    把 numpy 数组转成 PyTorch 的 DataLoader
+    Convert numpy arrays to PyTorch DataLoaders
 
-    为什么需要 DataLoader:
-        训练时不能一次把 42000 张图全塞进 GPU (内存不够), 需要分批处理。
-        DataLoader 自动帮你把数据切成小批次 (batch), 还能自动打乱顺序。
+    Why we need DataLoaders:
+        During training, we cannot load all 42000 images into GPU memory at once,
+        so we need to process them in batches. DataLoader automatically splits data
+        into mini-batches and can shuffle the order.
 
-    参数:
-        X_train, y_train: 训练集图像和标签 (numpy)
-        X_val, y_val:     验证集图像和标签 (numpy)
-        X_test, y_test:   测试集图像和标签 (numpy)
-        batch_size:       每批处理多少张图 (默认 128)
+    Args:
+        X_train, y_train: Training set images and labels (numpy)
+        X_val, y_val:     Validation set images and labels (numpy)
+        X_test, y_test:   Test set images and labels (numpy)
+        batch_size:       Number of images per batch (default 128)
 
-    返回:
-        train_loader, val_loader, test_loader (三个 DataLoader)
+    Returns:
+        train_loader, val_loader, test_loader (three DataLoaders)
 
-    关键区别:
-        - 训练集 DataLoader: 带数据增强 + 打乱顺序
-        - 验证/测试集 DataLoader: 不做增强 + 不打乱顺序
+    Key differences:
+        - Training DataLoader: with data augmentation + shuffling
+        - Validation/Test DataLoader: no augmentation + no shuffling
     """
-    # numpy → PyTorch tensor, 加一个通道维: (N, 28, 28) → (N, 1, 28, 28)
+    # numpy -> PyTorch tensor, add a channel dimension: (N, 28, 28) -> (N, 1, 28, 28)
     def to_tensor(X):
         return torch.tensor(X, dtype=torch.float32).unsqueeze(1)
 
-    # 训练集: 带数据增强 + 打乱顺序 (shuffle=True)
+    # Training set: with data augmentation + shuffling (shuffle=True)
     train_ds = _AugmentedDataset(
         to_tensor(X_train), torch.tensor(y_train, dtype=torch.long),
-        augment=True  # 训练时做增强
+        augment=True  # Apply augmentation during training
     )
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 
-    # 验证集: 不做增强, 不打乱
+    # Validation set: no augmentation, no shuffling
     val_loader = DataLoader(
         TensorDataset(to_tensor(X_val), torch.tensor(y_val, dtype=torch.long)),
         batch_size=batch_size,
     )
 
-    # 测试集: 不做增强, 不打乱
+    # Test set: no augmentation, no shuffling
     test_loader = DataLoader(
         TensorDataset(to_tensor(X_test), torch.tensor(y_test, dtype=torch.long)),
         batch_size=batch_size,
@@ -235,100 +240,100 @@ def prepare_cnn_data(X_train, y_train, X_val, y_val, X_test, y_test, batch_size=
 
 
 # ============================================================
-# CNN 训练
+# CNN Training
 # ============================================================
 
 def train_cnn(train_loader, val_loader, device, epochs=30, lr=0.001, patience=5):
     """
-    训练 CNN 模型
+    Train the CNN model
 
-    这是整个训练的核心函数, 流程如下:
-        每个 epoch:
-        1. 遍历训练集的所有 batch, 更新模型参数
-        2. 在验证集上评估, 计算 loss 和 accuracy
-        3. 如果验证 accuracy 提升了, 保存当前模型
-        4. 如果连续 patience 轮没提升, 提前停止 (早停)
+    This is the core training function. The process is as follows:
+        Each epoch:
+        1. Iterate over all training batches and update model parameters
+        2. Evaluate on the validation set, computing loss and accuracy
+        3. If validation accuracy improved, save the current model
+        4. If no improvement for `patience` consecutive epochs, stop early
 
-    参数:
-        train_loader: 训练集 DataLoader
-        val_loader:   验证集 DataLoader
-        device:       计算设备 (cpu 或 cuda)
-        epochs:       最多训练多少轮 (默认 30)
-        lr:           学习率 (默认 0.001)
-        patience:     早停耐心值 (默认 5, 即连续 5 轮不提升就停)
+    Args:
+        train_loader: Training set DataLoader
+        val_loader:   Validation set DataLoader
+        device:       Computing device (cpu or cuda)
+        epochs:       Maximum number of training epochs (default 30)
+        lr:           Learning rate (default 0.001)
+        patience:     Early stopping patience (default 5, stop if no improvement for 5 epochs)
 
-    返回:
-        model: 训练好的模型 (加载了最佳权重)
-        history: 训练历史记录, 包含每个 epoch 的 loss 和 accuracy
+    Returns:
+        model: Trained model (loaded with the best weights)
+        history: Training history, containing loss and accuracy for each epoch
     """
 
-    # ---- 初始化模型、损失函数、优化器、学习率调度器 ----
-    model = MNISTCNN().to(device)  # 创建模型并放到 GPU/CPU 上
-    print(f"\n  CNN 参数量: {count_parameters(model):,}")
-    print(f"  设备: {device}")
+    # ---- Initialize model, loss function, optimizer, learning rate scheduler ----
+    model = MNISTCNN().to(device)  # Create model and move to GPU/CPU
+    print(f"\n  CNN parameter count: {count_parameters(model):,}")
+    print(f"  Device: {device}")
 
-    # 损失函数: Focal Loss + Label Smoothing
-    # - Focal Loss: 自动关注难分样本 (如 7/9 混淆)
-    # - Label Smoothing: 防止模型过度自信
-    # 详细原理见 cnn.py 中 FocalLoss 类的注释
+    # Loss function: Focal Loss + Label Smoothing
+    # - Focal Loss: Automatically focuses on hard-to-classify samples (e.g., 7/9 confusion)
+    # - Label Smoothing: Prevents the model from becoming overconfident
+    # See the FocalLoss class comments in cnn.py for detailed principles
     criterion = FocalLoss(gamma=2.0, label_smoothing=0.1)
 
-    # 优化器: Adam
-    # - Adam 是自适应学习率优化器, 每个参数有独立的学习率
-    # - lr=0.001 是 Adam 的推荐默认值
-    # - weight_decay=1e-4 是 L2 正则化, 防止参数过大
+    # Optimizer: Adam
+    # - Adam is an adaptive learning rate optimizer, each parameter has its own learning rate
+    # - lr=0.001 is the recommended default for Adam
+    # - weight_decay=1e-4 is L2 regularization, prevents parameters from growing too large
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
 
-    # 学习率调度器: StepLR
-    # 每 10 个 epoch, 学习率乘以 0.1 (变成原来的 1/10)
-    # 前期大学习率快速学习, 后期小学习率精细调参
+    # Learning rate scheduler: StepLR
+    # Every 10 epochs, multiply the learning rate by 0.1 (reduce to 1/10)
+    # Large learning rate early for fast learning, small learning rate later for fine-tuning
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
-    # ---- 训练记录 ----
-    # history 字典记录每个 epoch 的训练/验证 loss 和 accuracy
+    # ---- Training records ----
+    # history dict records train/val loss and accuracy for each epoch
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
-    best_val_acc = 0.0          # 历史最佳验证 accuracy
-    epochs_no_improve = 0       # 已经连续几轮没有提升了
+    best_val_acc = 0.0          # Best validation accuracy so far
+    epochs_no_improve = 0       # Number of consecutive epochs with no improvement
 
-    # ---- 主训练循环 ----
+    # ---- Main training loop ----
     for epoch in range(1, epochs + 1):
 
-        # ===== 训练阶段 =====
-        model.train()  # 切换到训练模式 (开启 Dropout 和 BatchNorm 的训练行为)
+        # ===== Training phase =====
+        model.train()  # Switch to training mode (enable Dropout and BatchNorm training behavior)
         running_loss, correct, total = 0.0, 0, 0
 
         for images, labels in train_loader:
-            # 把数据搬到 GPU/CPU 上
+            # Move data to GPU/CPU
             images, labels = images.to(device), labels.to(device)
 
-            # 1. 前向传播: 图像 → 模型 → 预测
-            optimizer.zero_grad()      # 清空上一步的梯度 (必须!)
-            outputs = model(images)     # 前向传播, 得到每个类别的得分
+            # 1. Forward pass: images -> model -> predictions
+            optimizer.zero_grad()      # Clear gradients from the previous step (must do!)
+            outputs = model(images)     # Forward pass, get class scores
 
-            # 2. 计算损失: 预测 vs 真实标签
+            # 2. Compute loss: predictions vs ground truth labels
             loss = criterion(outputs, labels)
 
-            # 3. 反向传播: 计算 gradients
+            # 3. Backward pass: compute gradients
             loss.backward()
 
-            # 4. 更新参数: 用 gradients 调整模型权重
+            # 4. Update parameters: adjust model weights using gradients
             optimizer.step()
 
-            # 统计这个 batch 的 loss 和正确数
+            # Accumulate loss and correct predictions for this batch
             running_loss += loss.item() * images.size(0)
-            _, predicted = outputs.max(1)  # 取得分最高的类别作为预测
+            _, predicted = outputs.max(1)  # Take the class with the highest score as prediction
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
-        # 一个 epoch 训练完, 计算平均 loss 和 accuracy
+        # One epoch of training complete, compute average loss and accuracy
         train_loss = running_loss / total
         train_acc = 100.0 * correct / total
 
-        # ===== 验证阶段 =====
-        model.eval()  # 切换到评估模式 (关闭 Dropout, BatchNorm 用运行均值)
+        # ===== Validation phase =====
+        model.eval()  # Switch to evaluation mode (disable Dropout, BatchNorm uses running mean)
         val_loss, val_correct, val_total = 0.0, 0, 0
 
-        with torch.no_grad():  # 不计算梯度, 节省内存和计算
+        with torch.no_grad():  # Disable gradient computation to save memory and computation
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
@@ -341,179 +346,181 @@ def train_cnn(train_loader, val_loader, device, epochs=30, lr=0.001, patience=5)
         val_loss = val_loss / val_total
         val_acc = 100.0 * val_correct / val_total
 
-        # 更新学习率
+        # Update learning rate
         scheduler.step()
 
-        # 记录历史
+        # Record history
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
         history["val_loss"].append(val_loss)
         history["val_acc"].append(val_acc)
 
-        # 打印这一轮的结果
+        # Print this epoch's results
         print(f"  Epoch {epoch:2d}/{epochs} | "
               f"Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | "
               f"Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}% | "
               f"LR: {optimizer.param_groups[0]['lr']:.6f}")
 
-        # ===== 早停判断 =====
+        # ===== Early stopping check =====
         if val_acc > best_val_acc:
-            # 验证 accuracy 提升了 → 保存模型, 重置计数器
+            # Validation accuracy improved -> save model, reset counter
             best_val_acc = val_acc
-            best_state = model.state_dict().copy()  # 保存当前最佳权重
+            best_state = model.state_dict().copy()  # Save current best weights
             epochs_no_improve = 0
         else:
-            # 没提升 → 计数器 +1
+            # No improvement -> increment counter
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
-                print(f"  早停: 验证集准确率连续 {patience} 轮未提升")
-                break  # 提前结束训练
+                print(f"  Early stopping: validation accuracy has not improved for {patience} epochs")
+                break  # Stop training early
 
-    # 训练结束, 加载最佳权重 (不一定是最后一轮的, 而是验证 accuracy 最高的那轮)
+    # Training complete, load the best weights (not necessarily the last epoch, but the one with highest val accuracy)
     model.load_state_dict(best_state)
-    print(f"  最佳验证准确率: {best_val_acc:.2f}%")
+    print(f"  Best validation accuracy: {best_val_acc:.2f}%")
     return model, history
 
 
 def predict_cnn(model, data_loader, device):
     """
-    用训练好的 CNN 对数据进行预测
+    Make predictions using the trained CNN
 
-    参数:
-        model: 训练好的 CNN 模型
-        data_loader: 要预测的数据 DataLoader
-        device: 计算设备
+    Args:
+        model: Trained CNN model
+        data_loader: DataLoader for the data to predict
+        device: Computing device
 
-    返回:
-        numpy 数组, shape=(N,), 每个元素是预测的数字 (0-9)
+    Returns:
+        numpy array, shape=(N,), each element is the predicted digit (0-9)
     """
-    model.eval()  # 评估模式: 关闭 Dropout
+    model.eval()  # Evaluation mode: disable Dropout
     all_preds = []
-    with torch.no_grad():  # 不计算梯度, 纯预测
+    with torch.no_grad():  # Disable gradient computation, pure inference
         for images, _ in data_loader:
             images = images.to(device)
             outputs = model(images)
-            _, predicted = outputs.max(1)  # 取得分最高的类别
+            _, predicted = outputs.max(1)  # Take the class with the highest score
             all_preds.append(predicted.cpu().numpy())
     return np.concatenate(all_preds)
 
 
 # ============================================================
-# 基线模型: 用 sklearn 训练传统 ML 模型做对比
+# Baseline Models: Train traditional ML models using sklearn for comparison
 # ============================================================
 
 def train_baselines(X_train_features, y_train, X_val_features, y_val, X_test_features, y_test):
     """
-    训练 sklearn 基线模型, 并在训练集、验证集和测试集上分别预测
+    Train sklearn baseline models and predict on train, validation, and test sets
 
-    为什么需要基线模型:
-        只看 CNN 准确率 99% 没有意义, 需要对比才知道 CNN 是不是真的比简单方法好。
-        KNN、LR、RF 是三种不同思路的经典方法, 覆盖了近邻、线性、集成三个类型。
+    Why baseline models are needed:
+        A CNN accuracy of 99% is meaningless without comparison; we need baselines to
+        verify that CNN is genuinely better than simpler methods. KNN, LR, and RF are
+        classic methods covering three paradigms: nearest-neighbor, linear, and ensemble.
 
-    为什么基线用手工特征而非原始像素:
-        KNN/LR/RF 不能直接处理 2D 图像, 需要先把图像转成特征向量。
-        用组员做的 HOG+LBP+Shape 405 维特征是合理的——这些特征已经精心设计过。
+    Why baselines use hand-crafted features instead of raw pixels:
+        KNN/LR/RF cannot directly process 2D images; images must be converted to feature
+        vectors first. Using the HOG+LBP+Shape 405-dimensional features from team members
+        is reasonable since these features have been carefully designed.
 
-    参数:
-        X_train_features: 训练集特征, shape=(42000, 405)
-        y_train: 训练集标签, shape=(42000,)
-        X_val_features: 验证集特征, shape=(14000, 405)
-        y_val: 验证集标签
-        X_test_features: 测试集特征, shape=(14000, 405)
-        y_test: 测试集标签
+    Args:
+        X_train_features: Training set features, shape=(42000, 405)
+        y_train: Training set labels, shape=(42000,)
+        X_val_features: Validation set features, shape=(14000, 405)
+        y_val: Validation set labels
+        X_test_features: Test set features, shape=(14000, 405)
+        y_test: Test set labels
 
-    返回:
-        dict: {模型名: {"model": 分类器对象,
-                        "train_pred": 训练集预测,
-                        "val_pred": 验证集预测,
-                        "test_pred": 测试集预测}}
+    Returns:
+        dict: {model_name: {"model": classifier object,
+                            "train_pred": training set predictions,
+                            "val_pred": validation set predictions,
+                            "test_pred": test set predictions}}
     """
-    # 定义三个基线模型
+    # Define three baseline models
     baselines = {
-        # KNN (K-近邻): 找训练集中最近的 5 个样本, 投票决定分类
-        # n_neighbors=5: 看最近的 5 个邻居
-        # n_jobs=-1: 用所有 CPU 核心并行计算
+        # KNN (K-Nearest Neighbors): Find the 5 nearest samples in training set, vote for classification
+        # n_neighbors=5: Look at the 5 nearest neighbors
+        # n_jobs=-1: Use all CPU cores for parallel computation
         "KNN (k=5)": KNeighborsClassifier(n_neighbors=5, n_jobs=-1),
 
-        # Logistic Regression (逻辑回归): 线性分类器
-        # max_iter=1000: 最多迭代 1000 次 (默认 100 可能不够收敛)
-        # solver="lbfgs": 优化算法, 适合多分类
+        # Logistic Regression: Linear classifier
+        # max_iter=1000: Maximum 1000 iterations (default 100 may not converge)
+        # solver="lbfgs": Optimization algorithm, suitable for multi-class
         "Logistic Regression": LogisticRegression(max_iter=1000, solver="lbfgs", n_jobs=-1),
 
-        # Random Forest (随机森林): 多棵决策树投票
-        # n_estimators=100: 100 棵树
-        # random_state=42: 固定随机种子
+        # Random Forest: Multiple decision trees voting
+        # n_estimators=100: 100 trees
+        # random_state=42: Fixed random seed
         "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
     }
 
     results = {}
     for name, clf in baselines.items():
-        print(f"\n  训练 {name}...")
-        # 训练: 用训练集的特征和标签拟合模型
+        print(f"\n  Training {name}...")
+        # Train: fit the model using training set features and labels
         clf.fit(X_train_features, y_train)
 
-        # 在三个集合上分别预测 (用于后续分别评估)
+        # Predict on three sets separately (for subsequent evaluation)
         results[name] = {
             "model": clf,
-            "train_pred": clf.predict(X_train_features),  # 训练集预测
-            "val_pred": clf.predict(X_val_features),      # 验证集预测
-            "test_pred": clf.predict(X_test_features),    # 测试集预测
+            "train_pred": clf.predict(X_train_features),  # Training set predictions
+            "val_pred": clf.predict(X_val_features),      # Validation set predictions
+            "test_pred": clf.predict(X_test_features),    # Test set predictions
         }
-        print(f"  {name} 完成")
+        print(f"  {name} done")
 
     return results
 
 
 # ============================================================
-# 主流程: 一键跑完 CNN + 基线模型 的训练和评估
+# Main Pipeline: One-click CNN + baseline model training and evaluation
 # ============================================================
 
 def run_full_pipeline(X_train, y_train, X_val, y_val, X_test, y_test,
                       X_train_features, X_val_features, X_test_features,
                       batch_size=128, epochs=30, lr=0.001, seed=42):
     """
-    完整训练+评估流程
+    Full training + evaluation pipeline
 
-    做三件事:
-        1. 训练 CNN (用 PyTorch)
-        2. 训练 3 个基线模型 (用 sklearn)
-        3. 在训练集、验证集、测试集上分别评估所有模型
+    Does three things:
+        1. Train CNN (using PyTorch)
+        2. Train 3 baseline models (using sklearn)
+        3. Evaluate all models on train, validation, and test sets
 
-    参数:
-        X_train, y_train:     训练集图像 (42000, 28, 28) 和标签
-        X_val, y_val:         验证集图像 (14000, 28, 28) 和标签
-        X_test, y_test:       测试集图像 (14000, 28, 28) 和标签
-        X_train_features:     训练集特征 (42000, 405), 基线模型用
-        X_val_features:       验证集特征 (14000, 405)
-        X_test_features:      测试集特征 (14000, 405)
-        batch_size:           CNN 每批处理多少张图
-        epochs:               CNN 训练多少轮
-        lr:                   CNN 学习率
-        seed:                 随机种子
+    Args:
+        X_train, y_train:     Training set images (42000, 28, 28) and labels
+        X_val, y_val:         Validation set images (14000, 28, 28) and labels
+        X_test, y_test:       Test set images (14000, 28, 28) and labels
+        X_train_features:     Training set features (42000, 405), used by baseline models
+        X_val_features:       Validation set features (14000, 405)
+        X_test_features:      Test set features (14000, 405)
+        batch_size:           Number of images per CNN batch
+        epochs:               Number of CNN training epochs
+        lr:                   CNN learning rate
+        seed:                 Random seed
 
-    返回:
-        dict: 包含所有结果, 供可视化和保存摘要使用
+    Returns:
+        dict: Contains all results for visualization and summary saving
     """
     set_seed(seed)
     device = get_device()
 
     print("=" * 60)
-    print("  开始模型训练与评估")
-    print(f"  训练集: {len(y_train)}  验证集: {len(y_val)}  测试集: {len(y_test)}")
-    print(f"  比例 train:val:test = {len(y_train)}:{len(y_val)}:{len(y_test)}")
+    print("  Starting model training and evaluation")
+    print(f"  Training set: {len(y_train)}  Validation set: {len(y_val)}  Test set: {len(y_test)}")
+    print(f"  Ratio train:val:test = {len(y_train)}:{len(y_val)}:{len(y_test)}")
     print("=" * 60)
 
-    # ---- 第 1 步: 训练 CNN ----
-    print("\n[1/3] 训练 CNN...")
+    # ---- Step 1: Train CNN ----
+    print("\n[1/3] Training CNN...")
     train_loader, val_loader, test_loader = prepare_cnn_data(
         X_train, y_train, X_val, y_val, X_test, y_test, batch_size=batch_size
     )
     cnn_model, history = train_cnn(train_loader, val_loader, device, epochs=epochs, lr=lr)
 
-    # CNN 在三个集合上分别预测
-    # 注意: 训练集要用不带数据增强的 DataLoader (否则预测不准)
+    # CNN predictions on three sets
+    # Note: Training set must use a DataLoader without data augmentation (otherwise predictions are inaccurate)
     def to_loader(X, y):
-        """把 numpy 数据快速转成 DataLoader (不带增强)"""
+        """Quickly convert numpy data to a DataLoader (no augmentation)"""
         X_t = torch.tensor(X, dtype=torch.float32).unsqueeze(1)
         y_t = torch.tensor(y, dtype=torch.long)
         return DataLoader(TensorDataset(X_t, y_t), batch_size=batch_size)
@@ -522,58 +529,58 @@ def run_full_pipeline(X_train, y_train, X_val, y_val, X_test, y_test,
     y_pred_cnn_val = predict_cnn(cnn_model, val_loader, device)
     y_pred_cnn_test = predict_cnn(cnn_model, test_loader, device)
 
-    # ---- 第 2 步: 训练基线模型 ----
-    print("\n[2/3] 训练基线模型 (使用 HOG+LBP+Shape 特征)...")
+    # ---- Step 2: Train baseline models ----
+    print("\n[2/3] Training baseline models (using HOG+LBP+Shape features)...")
     baseline_results = train_baselines(
         X_train_features, y_train,
         X_val_features, y_val,
         X_test_features, y_test,
     )
 
-    # ---- 第 3 步: 在三个集合上分别评估所有模型 ----
-    print("\n[3/3] 评估所有模型...")
+    # ---- Step 3: Evaluate all models on three sets ----
+    print("\n[3/3] Evaluating all models...")
     all_results = []
 
-    # 遍历三个集合: 训练集、验证集、测试集
+    # Iterate over three sets: training, validation, test
     for split_name, y_true, y_pred_cnn, feat_key in [
-        ("训练集", y_train, y_pred_cnn_train, "train_pred"),
-        ("验证集", y_val, y_pred_cnn_val, "val_pred"),
-        ("测试集", y_test, y_pred_cnn_test, "test_pred"),
+        ("Training Set", y_train, y_pred_cnn_train, "train_pred"),
+        ("Validation Set", y_val, y_pred_cnn_val, "val_pred"),
+        ("Test Set", y_test, y_pred_cnn_test, "test_pred"),
     ]:
         print(f"\n{'='*60}")
-        print(f"  【{split_name}】 ({len(y_true)} 样本)")
+        print(f"  [{split_name}] ({len(y_true)} samples)")
         print(f"{'='*60}")
 
         split_results = []
 
-        # 评估 CNN
+        # Evaluate CNN
         cnn_eval = evaluate_model(y_true, y_pred_cnn, model_name="CNN")
         split_results.append(cnn_eval)
 
-        # 评估三个基线模型
+        # Evaluate three baseline models
         for name, bl in baseline_results.items():
-            y_pred_bl = bl[feat_key]  # 取出对应集合的预测结果
+            y_pred_bl = bl[feat_key]  # Get predictions for the corresponding set
             eval_res = evaluate_model(y_true, y_pred_bl, model_name=name)
             split_results.append(eval_res)
 
-        # 打印所有模型的评估结果
+        # Print evaluation results for all models
         for r in split_results:
             print_evaluation(r)
         print("\n" + compare_models(split_results))
 
         all_results.append({"split": split_name, "results": split_results})
 
-    # ---- 返回所有结果 ----
+    # ---- Return all results ----
     return {
-        "cnn_model": cnn_model,            # 训练好的 CNN 模型 (Grad-CAM 会用到)
-        "history": history,                # 训练历史 (画训练曲线用)
-        "all_results": all_results,         # 三个集合的评估结果
-        "y_pred_cnn_test": y_pred_cnn_test, # CNN 在测试集上的预测
-        "y_pred_cnn_val": y_pred_cnn_val,   # CNN 在验证集上的预测
-        "y_pred_cnn_train": y_pred_cnn_train, # CNN 在训练集上的预测
-        "baseline_results": baseline_results,  # 基线模型的结果
-        "device": device,                  # 计算设备 (Grad-CAM 需要)
-        "splits": {                        # 原始数据 (Grad-CAM 画图用)
+        "cnn_model": cnn_model,            # Trained CNN model (needed for Grad-CAM)
+        "history": history,                # Training history (for plotting training curves)
+        "all_results": all_results,         # Evaluation results on three sets
+        "y_pred_cnn_test": y_pred_cnn_test, # CNN predictions on test set
+        "y_pred_cnn_val": y_pred_cnn_val,   # CNN predictions on validation set
+        "y_pred_cnn_train": y_pred_cnn_train, # CNN predictions on training set
+        "baseline_results": baseline_results,  # Baseline model results
+        "device": device,                  # Computing device (needed for Grad-CAM)
+        "splits": {                        # Raw data (for Grad-CAM visualization)
             "train": (X_train, y_train),
             "val": (X_val, y_val),
             "test": (X_test, y_test),

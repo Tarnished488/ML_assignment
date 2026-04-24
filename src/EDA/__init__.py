@@ -1,6 +1,6 @@
 """
-探索性数据分析 (EDA) 模块
-提供对MNIST数据集的全面探索性分析功能
+Exploratory Data Analysis (EDA) Module
+Provides comprehensive exploratory analysis for the MNIST dataset
 """
 
 from .explorer import MNISTExplorer, load_and_analyze
