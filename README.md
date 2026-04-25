@@ -1,175 +1,210 @@
-# 手写数字识别系统
+# Handwritten Digit Recognition System
 
-基于 MNIST 数据集的手写数字识别项目，课程设计作业。
+A handwritten digit recognition project based on the MNIST dataset, built as a course design project.
 
-## 项目结构
+## Project Structure
 
 ```
 ML_assignment/
 ├── data/
-│   ├── raw/                  # 原始 MNIST 数据（自动下载）
-│   ├── processed/            # 预处理后数据
-│   └── features/             # 提取的特征向量
+│   ├── raw/                  # Raw MNIST data (auto-downloaded)
+│   ├── processed/            # Preprocessed data
+│   └── features/             # Extracted feature vectors
 ├── src/
-│   ├── data/                 # 数据加载与预处理（组长）
-│   │   ├── loader.py         # MNIST 数据加载
-│   │   └── preprocess.py     # 降噪/二值化/中心化
-│   ├── features/             # 特征工程（特征工程组员）
-│   │   ├── extractor.py      # HOG/LBP/Shape/PCA 特征提取
-│   │   └── pipeline.py       # 特征提取流水线
-│   ├── models/               # 模型训练与评估（烷基化三烃氧二梨）
-│   │   ├── cnn.py            # CNN + FocalLoss 定义
-│   │   ├── train.py          # 训练流程（CNN + KNN/LR/RF 基线）
-│   │   └── evaluate.py       # 评估指标（Accuracy/Precision/Recall/F1/混淆矩阵）
-│   └── visualization/        # 可视化（烷基化三烃氧二梨）
-│       └── plot.py           # 训练曲线/混淆矩阵/模型对比/错误样本/Grad-CAM
-├── results/                  # 运行后自动生成的评估结果和图表
-├── tests/                    # 单元测试
-├── main.py                   # 一键运行入口（训练 + 评估 + 画图）
-└── requirements.txt          # 依赖
+│   ├── data/                 # Data loading & preprocessing (Team Lead)
+│   │   ├── loader.py         # MNIST data loading
+│   │   └── preprocess.py     # Denoising / Binarization / Centering
+│   ├── features/             # Feature engineering (Feature Engineering)
+│   │   └── extractor.py      # HOG/LBP/Shape/PCA feature extraction
+│   ├── EDA/                  # Exploratory Data Analysis
+│   │   └── explorer.py       # MNISTExplorer: label distribution / sample grid / pixel analysis / PCA / t-SNE
+│   ├── models/               # Model training & evaluation
+│   │   ├── cnn.py            # CNN + FocalLoss definition
+│   │   ├── train.py          # Training pipeline (CNN + KNN/LR/RF baselines)
+│   │   └── evaluate.py       # Evaluation metrics (Accuracy/Precision/Recall/F1/Confusion Matrix)
+│   └── visualization/        # Visualization
+│       └── plot.py           # Training curves / Confusion matrices / Model comparison / Misclassified samples / Grad-CAM
+├── results/                  # Auto-generated evaluation results and charts
+├── tests/                    # Unit tests
+├── main.py                   # One-click entry point (training + evaluation + plotting)
+└── requirements.txt          # Dependencies
 ```
 
-## 快速开始
+## Quick Start
 
-### 一条命令跑全部
+### One Command to Run Everything
 
 ```bash
 pip install -r requirements.txt
 python main.py
 ```
 
-这会自动完成：下载 MNIST → 预处理 → 特征提取 → 训练 CNN + 3 个基线模型 → 在训练集/验证集/测试集上分别评估 → 生成图表。
+This automatically completes: Download MNIST → Preprocess → Feature extraction → Train CNN + 3 baseline models → Evaluate on training/validation/test sets → Generate charts.
 
-更多参数和常见问题见 [模型与评估说明文档](模型与评估说明文档.md)。
+Optionally enable EDA (Exploratory Data Analysis):
+```bash
+python main.py --eda --skip-training    # EDA only, skip training
+python main.py --eda                    # EDA + full training
+```
 
-### 单独运行各模块
+For more parameters and FAQs, see the [Model & Evaluation Documentation](模型与评估说明文档.md).
+
+### Run Individual Modules
 
 ```bash
-# 仅数据预处理
+# Full pipeline (preprocessing + feature extraction + training + evaluation)
 python main.py
 
-# 仅特征提取
-python -m src.features.pipeline
+# Exploratory Data Analysis only
+python main.py --eda --skip-training
 
-# 特征提取测试
-python tests/test_feature_extract.py
+# EDA with full training
+python main.py --eda
 ```
 
-## 数据划分
+## Data Split
 
-70000 张 MNIST 图像按 **训练集:验证集:测试集 = 6:2:2** 划分：
+70,000 MNIST images are split at **Train:Val:Test = 6:2:2**:
 
-| 集合 | 数量 | 用途 |
-|------|------|------|
-| 训练集 | 42,000 | 训练模型参数 |
-| 验证集 | 14,000 | 早停判断、超参选择、过拟合检测 |
-| 测试集 | 14,000 | 最终评估，所有模型共用 |
+| Set | Count | Purpose |
+|-----|-------|---------|
+| Training | 42,000 | Model parameter training |
+| Validation | 14,000 | Early stopping, hyperparameter selection, overfitting detection |
+| Test | 14,000 | Final evaluation, shared across all models |
 
-运行后会在训练集、验证集、测试集上**分别输出**每个模型的 Accuracy / Precision / Recall / F1 和混淆矩阵。
+Each model's Accuracy / Precision / Recall / F1 and confusion matrix are reported **separately** on all three sets.
 
-## 数据接口约定
+## Data Interface Convention
 
-预处理后数据格式：
+Preprocessed data format:
 
 ```python
-X_train: numpy.ndarray  # shape=(N, 28, 28), float32, 范围 [0, 1]
-y_train: numpy.ndarray  # shape=(N,), int64, 标签 0-9
+X_train: numpy.ndarray  # shape=(N, 28, 28), float32, range [0, 1]
+y_train: numpy.ndarray  # shape=(N,), int64, labels 0-9
 ```
 
-加载方式：
+Load via:
 
 ```python
 from src.data.loader import load_processed_data
 X_train, y_train, X_test, y_test = load_processed_data()
 ```
 
-## 预处理步骤
+## Preprocessing Steps
 
-1. **降噪** — 中值滤波去除孤立噪点
-2. **二值化** — 阈值分割（threshold=0.3），突出数字轮廓
-3. **中心化** — 找到数字边界框，移到 28×28 画布正中央
+1. **Denoising** — Median filter to remove isolated noise pixels
+2. **Binarization** — Threshold segmentation (threshold=0.3) to highlight digit contours
+3. **Centering** — Locate the digit bounding box and shift it to the center of the 28×28 canvas
 
-## 特征工程
+## Exploratory Data Analysis (EDA)
 
-特征工程模块位于 `src/features/`，核心类为 `FeatureExtractor`。
+The EDA module lives in `src/EDA/`, with `MNISTExplorer` as its core class. Enable it via the `--eda` flag in `main.py`.
 
-| 特征 | 维度 | 描述 |
-|------|------|------|
-| Raw Pixels | 784 | 原始像素展平 |
-| HOG | 324 | 梯度方向直方图，提取笔画方向 |
-| LBP | 10 | 局部二值模式，描述纹理 |
-| Shape | 71 | 形状统计（宽高比、重心、投影、象限密度） |
+```bash
+python main.py --eda --skip-training
+python main.py --eda --eda-output my_eda_results
+```
 
-默认组合：**HOG 324 + LBP 10 + Shape 71 = 405 维**
+### Analysis Components
 
-## 模型
+| Analysis | Method | Purpose |
+|----------|--------|---------|
+| Label Distribution | `plot_label_distribution()` | Check class balance |
+| Sample Grid | `plot_sample_grid()` | Visually inspect image quality per digit |
+| Mean/Std Images | `plot_mean_and_std_images()` | Observe average stroke shape and variation per class |
+| Digit Correlation Heatmap | `plot_digit_correlation_heatmap()` | Find which digits are most similar in mean appearance |
+| Confusing Pairs | `plot_confusing_pairs()` | Visualize the most confusable digit pairs (e.g., 7↔9, 4↔9) |
+| Pixel Intensity Distribution | `analyze_pixel_intensity()` | Histogram analysis + KS test for train/test consistency |
+| PCA Scatter Plot | `plot_pca_scatter()` | Dimensionality reduction to observe digit cluster separability |
+| t-SNE Visualization | `plot_tsne()` | Non-linear dimensionality reduction showing clearer cluster structure |
 
-### CNN（主模型）
+### Output
+
+When `--eda` is enabled, charts are saved to `eda_results/` (customizable via `--eda-output`).
+
+## Feature Engineering
+
+The feature engineering module is located in `src/features/`, with `FeatureExtractor` as its core class.
+
+| Feature | Dimensions | Description |
+|---------|-----------|-------------|
+| Raw Pixels | 784 | Flattened raw pixels |
+| HOG | 324 | Histogram of Oriented Gradients, captures stroke direction |
+| LBP | 10 | Local Binary Patterns, describes texture |
+| Shape | 71 | Shape statistics (aspect ratio, centroid, projections, quadrant density) |
+
+Default combination: **HOG 324 + LBP 10 + Shape 71 = 405 dimensions**
+
+## Models
+
+### CNN (Primary Model)
 
 ```
-输入层: 1 x 28 x 28 (灰度图像)
+Input: 1 x 28 x 28 (grayscale image)
     ↓
-卷积层1: Conv2d(1→32) + BatchNorm + ReLU + MaxPool
+Conv1: Conv2d(1→32) + BatchNorm + ReLU + MaxPool
     ↓
-卷积层2: Conv2d(32→64) + BatchNorm + ReLU + MaxPool
+Conv2: Conv2d(32→64) + BatchNorm + ReLU + MaxPool
     ↓
 Dropout: 0.25
     ↓
-全连接层1: Linear(3136→128) + ReLU + Dropout
+FC1: Linear(3136→128) + ReLU + Dropout
     ↓
-全连接层2: Linear(128→10)
+FC2: Linear(128→10)
     ↓
-输出层: 10类概率分布
+Output: 10-class probability distribution
 ```
 
-- 优化器：Adam (lr=0.001, weight_decay=1e-4)
-- 损失函数：Focal Loss + Label Smoothing (关注难分样本，防止过度自信)
-- 正则化：Kaiming 初始化 + BatchNorm + Dropout(0.25+0.5) + 数据增强 + 早停
+- Optimizer: Adam (lr=0.001, weight_decay=1e-4)
+- Loss function: Focal Loss + Label Smoothing (focuses on hard samples, prevents overconfidence)
+- Regularization: Kaiming initialization + BatchNorm + Dropout(0.25+0.5) + Data augmentation + Early stopping
 
-### 基线模型（用于对比）
+### Baseline Models (for comparison)
 
-| 模型 | 特征 | 说明 |
-|------|------|------|
-| KNN (k=5) | HOG+LBP+Shape 405维 | 经典近邻分类 |
-| Logistic Regression | HOG+LBP+Shape 405维 | 线性模型代表 |
-| Random Forest | HOG+LBP+Shape 405维 | 集成方法代表 |
+| Model | Features | Description |
+|-------|----------|-------------|
+| KNN (k=5) | HOG+LBP+Shape 405d | Classic nearest-neighbor classification |
+| Logistic Regression | HOG+LBP+Shape 405d | Linear model representative |
+| Random Forest | HOG+LBP+Shape 405d | Ensemble method representative |
 
-## 各模块职责
+## Module Responsibilities
 
-| 模块 | 负责人 | 核心任务 | 状态 |
-|-----|--------|---------|------|
-| data | 组长 | 数据加载、预处理、接口定义 |  |
-| features | 特征工程 | 特征提取(HOG/LBP/Shape)、PCA降维 |  |
-| models | 烷基化三烃氧二梨 | CNN + 基线模型训练与评估 |  |
-| visualization | 烷基化三烃氧二梨 | 训练曲线、混淆矩阵、模型对比图 |  |
+| Module | Lead | Core Task | Status |
+|--------|------|-----------|--------|
+| data | Team Lead | Data loading, preprocessing, interface design |  |
+| features | Feature Engineering | Feature extraction (HOG/LBP/Shape), PCA |  |
+| EDA | | Exploratory Data Analysis: label distribution / sample grid / correlation heatmap / PCA / t-SNE |  |
+| models | | CNN + baseline model training and evaluation |  |
+| visualization | | Training curves, confusion matrices, model comparison charts |  |
 
-## 实验结果
+## Experimental Results
 
-详细结果见 `results/evaluation_summary.txt`，图表见 `results/` 目录。
+See detailed results in `results/evaluation_summary.txt` and charts in the `results/` directory.
 
-3 epochs 快速测试示例（训练集:验证集:测试集 = 42000:14000:14000）：
+3-epoch quick test example (Train:Val:Test = 42000:14000:14000):
 
-| 模型 | 训练集 Acc | 验证集 Acc | 测试集 Acc |
-|------|-----------|-----------|-----------|
+| Model | Train Acc | Val Acc | Test Acc |
+|-------|-----------|---------|----------|
 | CNN (Focal Loss) | 95.32% | 95.49% | 95.32% |
 | Logistic Regression | 98.30% | 97.01% | 97.01% |
 | KNN (k=5) | 97.58% | 96.33% | 96.35% |
 | Random Forest | 100.00% | 96.40% | 95.84% |
 
-> 3 epochs 快速测试结果。Focal Loss 训练初期 loss 较高属正常现象。30 epochs 完整训练后各模型准确率会进一步提升。Random Forest 训练集 100% 说明存在过拟合。
+> Results from a 3-epoch fast test. Focal Loss naturally has higher loss early in training. All models will improve further with a full 30-epoch run. Random Forest reaching 100% on training set indicates overfitting.
 
-## 目标
+## Goals
 
-- [x] 项目骨架搭建
-- [x] 数据加载模块
-- [x] 预处理模块
-- [x] 特征工程
-- [x] 特征提取测试
-- [x] 模型训练（CNN + KNN + Logistic Regression + Random Forest）
-- [x] 可视化与评估（训练曲线/混淆矩阵/模型对比/错误样本/各类别准确率）
-- [ ] GUI 界面
-- [ ] 课程设计报告
+- [x] Project skeleton
+- [x] Data loading module
+- [x] Preprocessing module
+- [x] Feature engineering
+- [x] Feature extraction tests
+- [x] Exploratory Data Analysis (label distribution / sample grid / correlation heatmap / PCA / t-SNE)
+- [x] Model training (CNN + KNN + Logistic Regression + Random Forest)
+- [x] Visualization & evaluation (training curves / confusion matrices / model comparison / misclassified samples / per-class accuracy)
+- [ ] GUI interface
+- [ ] Course design report
 
-## 许可证
+## License
 
 MIT License

@@ -290,6 +290,21 @@ def _save_summary(results: dict, save_dir: str):
             f.write(row + "\n")
         f.write("-" * len(header) + "\n")
 
+        # Overfitting analysis
+        history = results["history"]
+        if history["train_acc"] and history["val_acc"]:
+            gap = history["train_acc"][-1] - history["val_acc"][-1]
+            f.write(f"\n  Overfitting Analysis:\n")
+            f.write(f"    Final training accuracy: {history['train_acc'][-1]:.2f}%\n")
+            f.write(f"    Final validation accuracy: {history['val_acc'][-1]:.2f}%\n")
+            f.write(f"    Train-val gap: {gap:.2f}%\n")
+            if gap > 5:
+                f.write("    Possible overfitting. Suggestions: increase data augmentation, increase Dropout, reduce parameters\n")
+            elif gap < -3:
+                f.write("    Training accuracy is lower than validation accuracy (due to data augmentation + regularization). Model generalizes well\n")
+            else:
+                f.write("    Low overfitting level. Model generalizes well\n")
+
     print(f"  Results summary saved: {save_dir}/evaluation_summary.txt")
 
 
